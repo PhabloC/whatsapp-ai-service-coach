@@ -1,8 +1,9 @@
-
 import React, { useState } from 'react';
-import { Sidebar } from './components/Sidebar';
-import { ChatWindow } from './components/ChatWindow';
-import { ChatSession, User, AnalysisEntry } from './types';
+import { QRCodeScanner } from './components/qr-code-scanner/QRCodeScanner';
+import { ChatSession, User, AnalysisEntry, Message } from './types';
+import { ChatWindow } from './components/chat-window/ChatWindow';
+import { ConnectionInstance } from './components/sidebar/types';
+import { Sidebar } from './components/sidebar/Sidebar';
 
 const INITIAL_MOCK_SESSIONS: ChatSession[] = [
   {
@@ -31,6 +32,20 @@ const INITIAL_MOCK_SESSIONS: ChatSession[] = [
       { id: '2b', sender: 'agent', text: 'Bom dia Maria. Você já tentou redefinir a senha através do link esqueci minha senha?', timestamp: '10:55', contactName: 'Maria Oliveira' },
       { id: '2c', sender: 'client', text: 'Consegui agora! Muito obrigada pela ajuda!', timestamp: '11:05', contactName: 'Maria Oliveira' }
     ]
+  },
+  {
+    id: '3',
+    contactName: 'SAC Premium',
+    lastMessage: 'Vou verificar seu caso com prioridade.',
+    timestamp: '09:30',
+    customPrompt: 'Avalie o nível de empatia e se o atendente demonstrou urgência adequada para clientes premium.',
+    analysisHistory: [],
+    messages: [
+      { id: '3a', sender: 'client', text: 'Boa dia, sou cliente há 5 anos e estou com um problema grave.', timestamp: '09:15', contactName: 'Carlos Mendes' },
+      { id: '3b', sender: 'agent', text: 'Bom dia Sr. Carlos! Reconheço sua fidelidade conosco. Por favor, me conte o que está acontecendo.', timestamp: '09:18', contactName: 'Carlos Mendes' },
+      { id: '3c', sender: 'client', text: 'Minha fatura veio com valor errado, quase o dobro do normal.', timestamp: '09:22', contactName: 'Carlos Mendes' },
+      { id: '3d', sender: 'agent', text: 'Entendo sua preocupação e peço desculpas pelo transtorno. Vou verificar seu caso com prioridade.', timestamp: '09:30', contactName: 'Carlos Mendes' }
+    ]
   }
 ];
 
@@ -38,9 +53,10 @@ const App: React.FC = () => {
   const [user, setUser] = useState<User | null>(null);
   const [sessions, setSessions] = useState<ChatSession[]>(INITIAL_MOCK_SESSIONS);
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
-  const [isConnecting, setIsConnecting] = useState(false);
+  const [showQRScanner, setShowQRScanner] = useState(false);
   const [isConnected, setIsConnected] = useState(false);
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
+  const [connections, setConnections] = useState<ConnectionInstance[]>([]);
 
   const handleLogin = (e: React.FormEvent) => {
     e.preventDefault();
@@ -48,16 +64,26 @@ const App: React.FC = () => {
   };
 
   const handleConnectWhatsApp = () => {
-    setIsConnecting(true);
-    setTimeout(() => {
-      setIsConnecting(false);
-      setIsConnected(true);
-    }, 1500);
+    const newConnection: ConnectionInstance = {
+      id: `conn-${Date.now()}`,
+      name: `Instância ${String(connections.length + 1).padStart(2, '0')}`,
+      status: 'active',
+      connectedAt: new Date().toLocaleString('pt-BR')
+    };
+    setConnections(prev => [...prev, newConnection]);
+    setIsConnected(true);
+    setShowQRScanner(false);
   };
 
   const handleAddConnection = () => {
-    setIsConnected(false);
-    setIsConnecting(false);
+    setShowQRScanner(true);
+  };
+
+  const handleDisconnectInstance = (id: string) => {
+    setConnections(prev => prev.filter(c => c.id !== id));
+    if (connections.length === 1) {
+      setIsConnected(false);
+    }
   };
 
   const updateSessionPrompt = (sessionId: string, newPrompt: string) => {
@@ -72,12 +98,27 @@ const App: React.FC = () => {
     ));
   };
 
+  const handleInjectMessage = (sessionId: string, message: Message) => {
+    setSessions(prev => prev.map(s => {
+      if (s.id === sessionId) {
+        return {
+          ...s,
+          messages: [...s.messages, message],
+          lastMessage: message.text,
+          timestamp: message.timestamp
+        };
+      }
+      return s;
+    }));
+  };
+
   const activeSession = sessions.find(s => s.id === activeSessionId) || null;
 
+  // Tela de Login
   if (!user) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-slate-900 p-6">
-        <div className="w-full max-w-md bg-white rounded-3xl shadow-2xl overflow-hidden border border-slate-800">
+      <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-slate-900 via-slate-800 to-emerald-900 p-6">
+        <div className="w-full max-w-md bg-white rounded-3xl shadow-2xl overflow-hidden border border-slate-800 animate-fade-in">
           <div className="p-10 space-y-8">
             <div className="text-center">
               <div className="w-16 h-16 bg-emerald-500 rounded-2xl mx-auto flex items-center justify-center shadow-2xl shadow-emerald-500/40 mb-6">
@@ -92,45 +133,102 @@ const App: React.FC = () => {
               <input type="password" defaultValue="password" placeholder="Senha" className="w-full p-4 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-emerald-500 font-medium text-sm transition-all" required />
               <button type="submit" className="w-full bg-slate-900 hover:bg-black text-white font-black py-4 rounded-xl shadow-xl transition-all active:scale-[0.98] tracking-widest text-sm">ENTRAR</button>
             </form>
+
+            <div className="pt-4 border-t border-slate-100">
+              <p className="text-[10px] text-slate-400 text-center">
+                Versão 1.0 • Modo Sandbox Ativo
+              </p>
+            </div>
           </div>
         </div>
       </div>
     );
   }
 
+  // Tela de Conexão QR Code
+  if (showQRScanner) {
+    return (
+      <QRCodeScanner 
+        onConnect={handleConnectWhatsApp}
+        onCancel={() => setShowQRScanner(false)}
+      />
+    );
+  }
+
+  // Tela inicial sem conexão
   if (!isConnected) {
     return (
-      <div className="min-h-screen flex flex-col items-center justify-center bg-slate-50 p-6">
-        <div className="w-full max-w-lg bg-white p-12 rounded-3xl shadow-xl text-center space-y-8 border border-slate-100">
+      <div className="min-h-screen flex flex-col items-center justify-center bg-gradient-to-br from-slate-900 via-slate-800 to-emerald-900 p-6">
+        <div className="w-full max-w-lg bg-white p-12 rounded-3xl shadow-xl text-center space-y-8 border border-slate-100 animate-fade-in">
           <div className="space-y-2">
-            <h2 className="text-2xl font-black text-slate-800">Conectar WhatsApp</h2>
-            <p className="text-slate-500 text-sm">Escaneie o QR Code abaixo para sincronizar uma nova instância de monitoramento.</p>
+            <div className="w-16 h-16 bg-slate-100 rounded-2xl mx-auto flex items-center justify-center mb-4">
+              <svg className="w-10 h-10 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 18h.01M8 21h8a2 2 0 002-2V5a2 2 0 00-2-2H8a2 2 0 00-2 2v14a2 2 0 002 2z" />
+              </svg>
+            </div>
+            <h2 className="text-2xl font-black text-slate-800">Bem-vindo, {user.name}!</h2>
+            <p className="text-slate-500 text-sm">Conecte sua primeira instância do WhatsApp para começar a monitorar atendimentos.</p>
           </div>
-          <div className="aspect-square w-64 mx-auto bg-white rounded-3xl flex items-center justify-center border border-slate-100 shadow-inner relative group">
-            {isConnecting ? (
-              <div className="flex flex-col items-center gap-4">
-                 <div className="w-12 h-12 border-4 border-emerald-100 border-t-emerald-500 rounded-full animate-spin"></div>
-                 <p className="text-xs font-black text-emerald-600 uppercase tracking-widest">Sincronizando...</p>
-              </div>
-            ) : (
-              <img src="https://api.qrserver.com/v1/create-qr-code/?size=250x250&data=coach-ai-sync-new" alt="QR Code" className="w-full h-full p-6 opacity-80" />
-            )}
+
+          <div className="bg-slate-50 rounded-2xl p-6 space-y-4">
+            <h3 className="font-bold text-slate-700 text-sm">O que você pode fazer:</h3>
+            <ul className="text-sm text-slate-500 space-y-2 text-left">
+              <li className="flex items-center gap-2">
+                <svg className="w-5 h-5 text-emerald-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M5 13l4 4L19 7" />
+                </svg>
+                Monitorar conversas em tempo real
+              </li>
+              <li className="flex items-center gap-2">
+                <svg className="w-5 h-5 text-emerald-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M5 13l4 4L19 7" />
+                </svg>
+                Auditar qualidade de atendimento com IA
+              </li>
+              <li className="flex items-center gap-2">
+                <svg className="w-5 h-5 text-emerald-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M5 13l4 4L19 7" />
+                </svg>
+                Acompanhar evolução dos atendentes
+              </li>
+              <li className="flex items-center gap-2">
+                <svg className="w-5 h-5 text-emerald-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M5 13l4 4L19 7" />
+                </svg>
+                Personalizar prompts por departamento
+              </li>
+            </ul>
           </div>
+
           <div className="flex gap-3">
-             <button onClick={() => setIsConnected(true)} className="flex-1 py-4 text-slate-400 font-bold text-sm">Voltar</button>
-             <button onClick={handleConnectWhatsApp} disabled={isConnecting} className="flex-[2] py-4 bg-emerald-500 text-white font-black rounded-xl hover:bg-emerald-600 shadow-lg shadow-emerald-500/20 disabled:opacity-50 transition-all">CONECTAR APARELHO</button>
+            <button 
+              onClick={() => setUser(null)} 
+              className="flex-1 py-4 text-slate-400 font-bold text-sm hover:text-slate-600 transition-colors"
+            >
+              Sair
+            </button>
+            <button 
+              onClick={handleAddConnection}
+              className="flex-[2] py-4 bg-emerald-500 text-white font-black rounded-xl hover:bg-emerald-600 shadow-lg shadow-emerald-500/20 transition-all active:scale-[0.98] flex items-center justify-center gap-2"
+            >
+              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 4v16m8-8H4" />
+              </svg>
+              CONECTAR WHATSAPP
+            </button>
           </div>
         </div>
       </div>
     );
   }
 
+  // Dashboard Principal
   return (
     <div className="h-screen flex bg-slate-100 overflow-hidden relative">
       {!isSidebarOpen && (
         <button 
           onClick={() => setIsSidebarOpen(true)}
-          className="fixed top-4 left-4 z-40 p-3 bg-white shadow-xl border border-slate-100 rounded-2xl text-slate-600 hover:text-emerald-500 transition-all active:scale-95 animate-in fade-in zoom-in"
+          className="fixed top-4 left-4 z-40 p-3 bg-white shadow-xl border border-slate-100 rounded-2xl text-slate-600 hover:text-emerald-500 transition-all active:scale-95 animate-fade-in"
         >
           <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 6h16M4 12h16m-7 6h7" /></svg>
         </button>
@@ -146,6 +244,8 @@ const App: React.FC = () => {
         onAddConnection={handleAddConnection}
         isOpen={isSidebarOpen}
         setIsOpen={setIsSidebarOpen}
+        connections={connections}
+        onDisconnectInstance={handleDisconnectInstance}
       />
       
       <main className="flex-1 flex flex-col overflow-hidden">
@@ -160,7 +260,8 @@ const App: React.FC = () => {
         <ChatWindow 
           session={activeSession} 
           onUpdateSessionPrompt={updateSessionPrompt} 
-          onSaveAnalysis={handleSaveAnalysis} 
+          onSaveAnalysis={handleSaveAnalysis}
+          onInjectMessage={handleInjectMessage}
         />
       </main>
     </div>
