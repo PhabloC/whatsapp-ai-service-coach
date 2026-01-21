@@ -1,0 +1,7 @@
+{
+  "name": "WhatsApp AI Service Coach",
+  "description": "A technical coaching platform that analyzes WhatsApp conversations using Gemini AI to improve customer service quality.",
+  "requestFramePermissions": [
+    "camera"
+  ]
+}
