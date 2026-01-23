@@ -1,29 +1,37 @@
 import React, { useState, useEffect } from 'react';
-import { AnalysisEntry } from '@/types';
+import { AnalysisEntry, CriteriaConfig, HeatmapAnalysis } from '@/types';
 import { ChatWindowProps } from './types';
-import { analyzeConversation } from '@/geminiService';
+import { analyzeConversation, analyzeConversationWithHeatmap } from '@/geminiService';
 import { EvolutionHistory } from '@/components/evolution-history/EvolutionHistory';
-import { MessageInjector } from '../message-injector/MessageInjector';
+import { CriteriaConfigComponent } from '../criteria-config/CriteriaConfig';
+import { HeatmapScore } from '../heatmap/HeatmapScore';
 
 
 
 export const ChatWindow: React.FC<ChatWindowProps> = ({ 
   session, 
-  onUpdateSessionPrompt, 
+  onUpdateSessionPrompt,
+  onUpdateSessionCriteria,
   onSaveAnalysis,
-  onInjectMessage 
+  onSaveHeatmap,
+  onInjectMessage,
+  instanceCriteria
 }) => {
   const [currentPrompt, setCurrentPrompt] = useState('');
   const [isAnalyzing, setIsAnalyzing] = useState(false);
+  const [isAnalyzingHeatmap, setIsAnalyzingHeatmap] = useState(false);
   const [isEditingConfig, setIsEditingConfig] = useState(false);
+  const [showCriteriaConfig, setShowCriteriaConfig] = useState(false);
   const [selectedHistoryId, setSelectedHistoryId] = useState<string | null>(null);
-  const [showMessageInjector, setShowMessageInjector] = useState(false);
+  const [selectedHeatmapId, setSelectedHeatmapId] = useState<string | null>(null);
   const [showEvolutionHistory, setShowEvolutionHistory] = useState(false);
+  const [analysisMode, setAnalysisMode] = useState<'classic' | 'heatmap'>('heatmap');
 
   useEffect(() => {
     if (session) {
       setCurrentPrompt(session.customPrompt || 'Analise o tom de voz e a eficiência em resolver o problema do cliente.');
       setSelectedHistoryId(session.analysisHistory.length > 0 ? session.analysisHistory[0].id : null);
+      setSelectedHeatmapId(session.heatmapHistory && session.heatmapHistory.length > 0 ? session.heatmapHistory[0].id : null);
     }
   }, [session]);
 
@@ -48,7 +56,74 @@ export const ChatWindow: React.FC<ChatWindowProps> = ({
     }
   };
 
+  const handleAnalyzeHeatmap = async () => {
+    if (!session) return;
+    
+    // Buscar critérios da sessão ou da instância
+    let criteriaToUse = session.criteriaConfig;
+    
+    // Se não tem critérios na sessão, tentar buscar da instância
+    if (!criteriaToUse && instanceCriteria) {
+      // Extrair instanceId do sessionId (formato: instanceId-contactJid)
+      // Tentar encontrar a instância correspondente
+      for (const [instanceId, criteria] of instanceCriteria.entries()) {
+        if (session.id.startsWith(instanceId + '-')) {
+          criteriaToUse = criteria;
+          break;
+        }
+      }
+    }
+    
+    // Se ainda não tem critérios, mostrar alerta
+    if (!criteriaToUse || !Object.values(criteriaToUse).some(v => v.trim() !== '')) {
+      alert('Por favor, configure os critérios de avaliação primeiro na aba AJUSTES > Critérios de Avaliação.');
+      return;
+    }
+
+    setIsAnalyzingHeatmap(true);
+    try {
+      const result = await analyzeConversationWithHeatmap(session.messages, criteriaToUse);
+      
+      // Salvar heatmap
+      if (onSaveHeatmap) {
+        onSaveHeatmap(session.id, result);
+      }
+
+      // Também criar uma entrada de análise para compatibilidade
+      if (onSaveAnalysis) {
+        const analysisEntry: AnalysisEntry = {
+          id: Date.now().toString(),
+          timestamp: new Date().toLocaleString('pt-BR'),
+          promptUsed: 'Análise Heatmap Score',
+          result: {
+            score: result.nota_final * 10, // Converter para 0-100
+            strengths: Object.values(result.analise).map(p => p.justificativa),
+            improvements: [],
+            coachingTips: `Status: ${result.performance_status}`
+          }
+        };
+        onSaveAnalysis(session.id, analysisEntry);
+      }
+
+      // Selecionar o heatmap recém-criado
+      const newHeatmapId = Date.now().toString();
+      setSelectedHeatmapId(newHeatmapId);
+    } catch (error) {
+      console.error(error);
+      alert('Erro ao gerar Heatmap Score. Verifique se a chave da API Gemini está configurada.');
+    } finally {
+      setIsAnalyzingHeatmap(false);
+    }
+  };
+
+  const handleSaveCriteria = (criteria: CriteriaConfig) => {
+    if (!session) return;
+    onUpdateSessionCriteria(session.id, criteria);
+    setShowCriteriaConfig(false);
+  };
+
   const activeAnalysis = session?.analysisHistory.find(h => h.id === selectedHistoryId)?.result;
+  const activeHeatmap = session?.heatmapHistory?.find(h => h.id === selectedHeatmapId)?.analysis;
 
   if (!session) {
     return (
@@ -61,24 +136,26 @@ export const ChatWindow: React.FC<ChatWindowProps> = ({
 
   return (
     <div className="flex-1 flex flex-row h-full overflow-hidden">
-      {/* Message Injector Modal */}
-      {showMessageInjector && (
-        <MessageInjector
-          sessionId={session.id}
-          contactName={session.messages[0]?.contactName || 'Cliente'}
-          onInjectMessage={(sessionId, message) => {
-            onInjectMessage(sessionId, message);
-            setShowMessageInjector(false);
-          }}
-          onClose={() => setShowMessageInjector(false)}
-        />
-      )}
-
       {/* Evolution History Modal */}
       {showEvolutionHistory && (
         <EvolutionHistory
           analysisHistory={session.analysisHistory}
           onClose={() => setShowEvolutionHistory(false)}
+        />
+      )}
+
+      {/* Criteria Config Modal */}
+      {showCriteriaConfig && session && (
+        <CriteriaConfigComponent
+          criteria={session.criteriaConfig || {
+            estrutura: '',
+            spiced: '',
+            solucao: '',
+            objeções: '',
+            rapport: ''
+          }}
+          onSave={handleSaveCriteria}
+          onCancel={() => setShowCriteriaConfig(false)}
         />
       )}
 
@@ -94,20 +171,19 @@ export const ChatWindow: React.FC<ChatWindowProps> = ({
             </div>
           </div>
           <div className="flex items-center gap-2">
-            {/* Botão de Injeção de Mensagens */}
+            {/* Botão de Configuração de Critérios */}
             <button 
-              onClick={() => setShowMessageInjector(true)}
-              className="p-2 rounded-full transition-colors text-amber-500 hover:bg-amber-50"
-              title="Injetar Mensagem (Sandbox)"
+              onClick={() => setShowCriteriaConfig(true)}
+              className={`p-2 rounded-full transition-colors ${session?.criteriaConfig ? 'bg-emerald-100 text-emerald-600' : 'text-slate-400 hover:bg-slate-100'}`}
+              title="Configurar Critérios do Heatmap"
             >
-              <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 6v6m0 0v6m0-6h6m-6 0H6" />
-              </svg>
+              <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" /></svg>
             </button>
-            {/* Botão de Configuração */}
+            {/* Botão de Configuração de Prompt */}
             <button 
               onClick={() => setIsEditingConfig(!isEditingConfig)}
               className={`p-2 rounded-full transition-colors ${isEditingConfig ? 'bg-emerald-100 text-emerald-600' : 'text-slate-400 hover:bg-slate-100'}`}
+              title="Configurar Prompt"
             >
               <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" /><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" /></svg>
             </button>
@@ -140,13 +216,6 @@ export const ChatWindow: React.FC<ChatWindowProps> = ({
           ))}
         </div>
 
-        {/* Sandbox Mode Indicator */}
-        <div className="p-2 bg-amber-50 border-t border-amber-100 flex items-center justify-center gap-2">
-          <svg className="w-4 h-4 text-amber-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
-          </svg>
-          <span className="text-xs font-bold text-amber-600">Modo Sandbox - Clique em + para injetar mensagens de teste</span>
-        </div>
       </div>
 
       <div className="w-96 border-l bg-white flex flex-col h-full overflow-hidden">
@@ -156,6 +225,29 @@ export const ChatWindow: React.FC<ChatWindowProps> = ({
             Análise do Coach
           </h3>
           <div className="flex items-center gap-2">
+            {/* Toggle entre modos de análise */}
+            <div className="flex bg-slate-800 rounded-lg p-1">
+              <button
+                onClick={() => setAnalysisMode('heatmap')}
+                className={`px-3 py-1 rounded text-xs font-bold transition-all ${
+                  analysisMode === 'heatmap' 
+                    ? 'bg-emerald-500 text-white' 
+                    : 'text-slate-400 hover:text-white'
+                }`}
+              >
+                Heatmap
+              </button>
+              <button
+                onClick={() => setAnalysisMode('classic')}
+                className={`px-3 py-1 rounded text-xs font-bold transition-all ${
+                  analysisMode === 'classic' 
+                    ? 'bg-emerald-500 text-white' 
+                    : 'text-slate-400 hover:text-white'
+                }`}
+              >
+                Clássica
+              </button>
+            </div>
             {session.analysisHistory.length > 1 && (
               <button 
                 onClick={() => setShowEvolutionHistory(true)}
@@ -168,11 +260,12 @@ export const ChatWindow: React.FC<ChatWindowProps> = ({
               </button>
             )}
             <button 
-              onClick={handleAnalyze} 
-              disabled={isAnalyzing}
+              onClick={analysisMode === 'heatmap' ? handleAnalyzeHeatmap : handleAnalyze} 
+              disabled={isAnalyzing || isAnalyzingHeatmap}
               className="p-2 bg-emerald-500 hover:bg-emerald-600 rounded-lg disabled:opacity-50 transition-all"
+              title={analysisMode === 'heatmap' ? 'Gerar Heatmap Score' : 'Gerar Análise Clássica'}
             >
-              {isAnalyzing ? (
+              {(isAnalyzing || isAnalyzingHeatmap) ? (
                 <svg className="animate-spin h-5 w-5 text-white" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
               ) : (
                 <svg className="w-5 h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z" /><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
@@ -182,7 +275,42 @@ export const ChatWindow: React.FC<ChatWindowProps> = ({
         </div>
 
         <div className="flex-1 overflow-y-auto p-4 space-y-4">
-          {session.analysisHistory.length > 0 && (
+          {/* Exibir Heatmap se disponível e modo selecionado */}
+          {analysisMode === 'heatmap' && activeHeatmap ? (
+            <div className="animate-fade-in">
+              <HeatmapScore analysis={activeHeatmap} />
+            </div>
+          ) : analysisMode === 'heatmap' && session.heatmapHistory && session.heatmapHistory.length > 0 ? (
+            <div className="space-y-2">
+              <div className="flex items-center justify-between">
+                <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Histórico de Heatmaps</label>
+              </div>
+              <div className="flex gap-2 overflow-x-auto pb-2 scrollbar-hide">
+                {session.heatmapHistory.map((h) => (
+                  <button
+                    key={h.id}
+                    onClick={() => setSelectedHeatmapId(h.id)}
+                    className={`flex-shrink-0 px-3 py-2 rounded-lg text-xs font-bold border transition-all ${selectedHeatmapId === h.id ? 'bg-emerald-500 text-white border-emerald-600' : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50'}`}
+                  >
+                    {h.timestamp.split(',')[1]?.trim() || h.timestamp} - {h.analysis.nota_final.toFixed(1)}
+                  </button>
+                ))}
+              </div>
+              {activeHeatmap && <HeatmapScore analysis={activeHeatmap} />}
+            </div>
+          ) : analysisMode === 'heatmap' ? (
+            <div className="flex flex-col items-center justify-center h-64 text-center p-8 opacity-40">
+              <svg className="w-12 h-12 mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" /></svg>
+              <p className="text-sm font-medium">Nenhum Heatmap gerado ainda.</p>
+              {!session.criteriaConfig && (
+                <p className="text-xs text-amber-600 mt-2">Configure os critérios primeiro!</p>
+              )}
+              <button onClick={handleAnalyzeHeatmap} className="mt-4 text-xs font-bold text-emerald-500 uppercase">Gerar Heatmap</button>
+            </div>
+          ) : null}
+
+          {/* Análise Clássica */}
+          {analysisMode === 'classic' && session.analysisHistory.length > 0 && (
             <div className="space-y-2">
               <div className="flex items-center justify-between">
                 <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Histórico de Sessões</label>
@@ -209,7 +337,7 @@ export const ChatWindow: React.FC<ChatWindowProps> = ({
             </div>
           )}
 
-          {activeAnalysis ? (
+          {analysisMode === 'classic' && activeAnalysis ? (
             <div className="space-y-6 animate-fade-in">
               <div className="text-center p-6 bg-slate-50 rounded-2xl border border-dashed border-slate-300">
                 <div className={`text-5xl font-black mb-2 ${activeAnalysis.score >= 70 ? 'text-emerald-500' : activeAnalysis.score >= 50 ? 'text-amber-500' : 'text-red-500'}`}>
@@ -284,13 +412,13 @@ export const ChatWindow: React.FC<ChatWindowProps> = ({
                 </div>
               </div>
             </div>
-          ) : (
+          ) : analysisMode === 'classic' ? (
             <div className="flex flex-col items-center justify-center h-64 text-center p-8 opacity-40">
               <svg className="w-12 h-12 mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M13 10V3L4 14h7v7l9-11h-7z" /></svg>
               <p className="text-sm font-medium">Nenhuma análise realizada para esta sessão.</p>
               <button onClick={handleAnalyze} className="mt-4 text-xs font-bold text-emerald-500 uppercase">Iniciar Agora</button>
             </div>
-          )}
+          ) : null}
         </div>
       </div>
     </div>

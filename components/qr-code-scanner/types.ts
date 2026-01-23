@@ -1,5 +1,5 @@
 export interface QRCodeScannerProps {
-    onConnect: () => void;
+    onConnect: (instanceId: string) => void;
     onCancel: () => void;
   }
   

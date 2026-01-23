@@ -1,7 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { StageInfo, QRCodeScannerProps } from './types';
-
-
+import { whatsappAPI } from '../../src/services/whatsapp-api';
 
 const STAGE_INFO: Record<'idle' | 'scanning' | 'authenticating' | 'syncing' | 'connected', StageInfo> = {
   idle: { title: 'Aguardando', description: 'Escaneie o QR Code com seu WhatsApp', progress: 0 },
@@ -15,44 +14,157 @@ export const QRCodeScanner: React.FC<QRCodeScannerProps> = ({ onConnect, onCance
   const [stage, setStage] = useState<'idle' | 'scanning' | 'authenticating' | 'syncing' | 'connected'>('idle');
   const [qrCode, setQrCode] = useState<string>('');
   const [countdown, setCountdown] = useState(120);
+  const [instanceId, setInstanceId] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
 
-  // Gera QR Code dinâmico
   useEffect(() => {
-    const generateQR = () => {
-      const timestamp = Date.now();
-      const randomToken = Math.random().toString(36).substring(2, 15);
-      setQrCode(`coach-ai-${timestamp}-${randomToken}`);
+    // Conectar WebSocket
+    whatsappAPI.connect();
+
+    // Listener para QR Code (com verificação mais flexível)
+    const handleQR = (data: { instanceId: string; qrCode: string }) => {
+      console.log('QR Code recebido via WebSocket:', data.instanceId);
+      // Aceitar QR mesmo se instanceId ainda não estiver definido (pode chegar antes)
+      if (!instanceId || data.instanceId === instanceId) {
+        setQrCode(data.qrCode);
+        setStage('scanning');
+        setCountdown(120);
+        if (!instanceId && data.instanceId) {
+          setInstanceId(data.instanceId);
+        }
+      }
     };
 
-    generateQR();
-    const interval = setInterval(generateQR, 30000); // Atualiza a cada 30s
+    // Listener para conexão estabelecida (mais flexível)
+    const handleConnected = (data: { instanceId: string; phoneNumber?: string }) => {
+      console.log('Conexão detectada via WebSocket:', data.instanceId, 'Current:', instanceId);
+      // Aceitar conexão mesmo se instanceId ainda não estiver definido
+      if (!instanceId || data.instanceId === instanceId) {
+        console.log('Atualizando para conectado!');
+        setStage('connected');
+        if (!instanceId && data.instanceId) {
+          setInstanceId(data.instanceId);
+        }
+        setTimeout(() => {
+          onConnect(data.instanceId);
+        }, 1000);
+      }
+    };
 
-    return () => clearInterval(interval);
-  }, []);
+    // Listener para desconexão
+    const handleDisconnected = (data: { instanceId: string }) => {
+      if (!instanceId || data.instanceId === instanceId) {
+        setStage('idle');
+        setQrCode('');
+      }
+    };
+
+    whatsappAPI.on('qr', handleQR);
+    whatsappAPI.on('instance_connected', handleConnected);
+    whatsappAPI.on('instance_disconnected', handleDisconnected);
+
+    // Criar nova instância após configurar listeners
+    const createInstance = async () => {
+      try {
+        setError(null);
+        setStage('idle');
+        console.log('Criando instância WhatsApp...');
+        const instance = await whatsappAPI.createInstance(`Instância ${new Date().toLocaleTimeString()}`);
+        console.log('Instância criada:', instance.id);
+        setInstanceId(instance.id);
+        setStage('scanning');
+      } catch (err: any) {
+        setError(err.message || 'Erro ao criar instância');
+        console.error('Erro ao criar instância:', err);
+        setStage('idle');
+      }
+    };
+
+    // Aguardar um pouco para garantir que WebSocket está conectado
+    const timer = setTimeout(() => {
+      createInstance();
+    }, 500);
+
+    return () => {
+      clearTimeout(timer);
+      whatsappAPI.off('qr', handleQR);
+      whatsappAPI.off('instance_connected', handleConnected);
+      whatsappAPI.off('instance_disconnected', handleDisconnected);
+    };
+  }, [onConnect]); // Remover instanceId da dependência para evitar re-criação
 
   // Countdown do QR Code
   useEffect(() => {
-    if (stage === 'idle' && countdown > 0) {
+    if (stage === 'scanning' && countdown > 0 && qrCode) {
       const timer = setTimeout(() => setCountdown(c => c - 1), 1000);
       return () => clearTimeout(timer);
     }
-    if (countdown === 0) {
-      setQrCode(`coach-ai-expired-${Date.now()}`);
+    if (countdown === 0 && qrCode) {
+      // QR Code expirado, aguardar novo
+      setQrCode('');
       setCountdown(120);
     }
-  }, [countdown, stage]);
+  }, [countdown, stage, qrCode]);
 
-  // Simula fluxo de conexão
-  const handleStartConnection = () => {
-    setStage('scanning');
-    
-    setTimeout(() => setStage('authenticating'), 1500);
-    setTimeout(() => setStage('syncing'), 3000);
-    setTimeout(() => {
-      setStage('connected');
-      setTimeout(onConnect, 1000);
-    }, 5000);
-  };
+  // Buscar status periodicamente (QR Code e conexão) se não recebeu via WebSocket
+  useEffect(() => {
+    if (!instanceId) return;
+
+    let attempts = 0;
+    const maxAttempts = 120; // 60 segundos (500ms * 120)
+    let intervalId: NodeJS.Timeout | null = null;
+
+    const checkStatus = async () => {
+      try {
+        attempts++;
+        
+        // Usar endpoint otimizado de QR Code primeiro
+        const qrData = await whatsappAPI.getQRCode(instanceId);
+        
+        // Verificar se conectou
+        if (qrData.status === 'connected') {
+          console.log('✅ Conexão detectada via polling!');
+          setStage('connected');
+          setQrCode(''); // Limpar QR Code
+          if (intervalId) clearInterval(intervalId);
+          setTimeout(() => {
+            onConnect(instanceId);
+          }, 1000);
+          return true; // Conectado, parar polling
+        }
+        
+        // Verificar se tem QR Code
+        if (qrData.hasQR && qrData.qrCode && !qrCode) {
+          console.log('📱 QR Code encontrado via polling!');
+          setQrCode(qrData.qrCode);
+          setStage('scanning');
+          setCountdown(120);
+          // Continuar verificando conexão mesmo com QR Code
+        }
+        
+        // Se já tentou muitas vezes, reduzir frequência mas continuar
+        if (attempts >= maxAttempts && intervalId) {
+          clearInterval(intervalId);
+          // Continuar com polling mais lento
+          intervalId = setInterval(checkStatus, 2000);
+        }
+        
+        return false;
+      } catch (err) {
+        console.error('Erro ao verificar status:', err);
+        return false;
+      }
+    };
+
+    // Polling agressivo inicial (500ms) para detectar mudanças rapidamente
+    intervalId = setInterval(async () => {
+      await checkStatus();
+    }, 500);
+
+    return () => {
+      if (intervalId) clearInterval(intervalId);
+    };
+  }, [instanceId, onConnect, qrCode]);
 
   const stageInfo = STAGE_INFO[stage];
 
@@ -75,6 +187,13 @@ export const QRCodeScanner: React.FC<QRCodeScannerProps> = ({ onConnect, onCance
           </p>
         </div>
 
+        {/* Error Message */}
+        {error && (
+          <div className="bg-red-50 border border-red-200 rounded-xl p-4 text-red-600 text-sm">
+            {error}
+          </div>
+        )}
+
         {/* Progress Bar */}
         {stage !== 'idle' && (
           <div className="space-y-2 animate-slide-up">
@@ -93,11 +212,27 @@ export const QRCodeScanner: React.FC<QRCodeScannerProps> = ({ onConnect, onCance
 
         {/* QR Code Area */}
         <div className="relative aspect-square w-64 mx-auto bg-white rounded-3xl flex items-center justify-center border-2 border-slate-100 shadow-inner overflow-hidden">
-          {stage === 'idle' ? (
+          {!qrCode && stage === 'scanning' ? (
+            <div className="flex flex-col items-center gap-4">
+              <div className="relative">
+                <div className="w-16 h-16 border-4 border-emerald-100 border-t-emerald-500 rounded-full animate-spin" />
+                <div className="absolute inset-0 flex items-center justify-center">
+                  <div className="w-8 h-8 bg-emerald-500 rounded-full animate-pulse" />
+                </div>
+              </div>
+              <div className="text-center">
+                <p className="text-xs font-black text-emerald-600 uppercase tracking-widest mb-1">
+                  Gerando QR Code...
+                </p>
+                <p className="text-[10px] text-slate-400">
+                  Aguarde alguns segundos
+                </p>
+              </div>
+            </div>
+          ) : qrCode && stage === 'scanning' ? (
             <>
-              <div className="qr-scanner absolute inset-0 pointer-events-none" />
               <img 
-                src={`https://api.qrserver.com/v1/create-qr-code/?size=250x250&data=${encodeURIComponent(qrCode)}`} 
+                src={qrCode} 
                 alt="QR Code" 
                 className="w-full h-full p-4 opacity-90" 
               />
@@ -125,11 +260,6 @@ export const QRCodeScanner: React.FC<QRCodeScannerProps> = ({ onConnect, onCance
               <div className="relative">
                 <div className="w-16 h-16 border-4 border-emerald-100 border-t-emerald-500 rounded-full animate-spin" />
                 <div className="absolute inset-0 flex items-center justify-center">
-                  {stage === 'scanning' && (
-                    <svg className="w-6 h-6 text-emerald-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 4v1m6 11h2m-6 0h-2v4m0-11v3m0 0h.01M12 12h4.01M16 20h4M4 12h4m12 0h.01M5 8h2a1 1 0 001-1V5a1 1 0 00-1-1H5a1 1 0 00-1 1v2a1 1 0 001 1zm12 0h2a1 1 0 001-1V5a1 1 0 00-1-1h-2a1 1 0 00-1 1v2a1 1 0 001 1zM5 20h2a1 1 0 001-1v-2a1 1 0 00-1-1H5a1 1 0 00-1 1v2a1 1 0 001 1z" />
-                    </svg>
-                  )}
                   {stage === 'authenticating' && (
                     <svg className="w-6 h-6 text-emerald-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" />
@@ -164,7 +294,7 @@ export const QRCodeScanner: React.FC<QRCodeScannerProps> = ({ onConnect, onCance
         </div>
 
         {/* Instructions */}
-        {stage === 'idle' && (
+        {stage === 'scanning' && qrCode && (
           <div className="bg-slate-50 rounded-2xl p-4 space-y-3 text-left">
             <h4 className="text-xs font-black text-slate-600 uppercase tracking-wider">Como conectar:</h4>
             <ol className="text-xs text-slate-500 space-y-2">
@@ -189,16 +319,9 @@ export const QRCodeScanner: React.FC<QRCodeScannerProps> = ({ onConnect, onCance
           <button 
             onClick={onCancel} 
             className="flex-1 py-4 text-slate-400 font-bold text-sm hover:text-slate-600 transition-colors"
-            disabled={stage !== 'idle' && stage !== 'connected'}
+            disabled={stage === 'connected'}
           >
             Cancelar
-          </button>
-          <button 
-            onClick={handleStartConnection} 
-            disabled={stage !== 'idle'}
-            className="flex-[2] py-4 bg-emerald-500 text-white font-black rounded-xl hover:bg-emerald-600 shadow-lg shadow-emerald-500/20 disabled:opacity-50 disabled:cursor-not-allowed transition-all active:scale-[0.98]"
-          >
-            {stage === 'idle' ? 'SIMULAR CONEXÃO' : 'CONECTANDO...'}
           </button>
         </div>
       </div>
