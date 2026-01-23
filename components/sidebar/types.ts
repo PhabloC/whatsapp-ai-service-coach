@@ -1,4 +1,4 @@
-import { ChatSession } from "@/types";
+import { ChatSession, CriteriaConfig } from "@/types";
 
 export interface SidebarProps {
     sessions: ChatSession[];
@@ -12,6 +12,10 @@ export interface SidebarProps {
     setIsOpen: (open: boolean) => void;
     connections: ConnectionInstance[];
     onDisconnectInstance: (id: string) => void;
+    currentView: 'chats' | 'dashboard' | 'settings';
+    onViewChange: (view: 'chats' | 'dashboard' | 'settings') => void;
+    instanceCriteria: Map<string, CriteriaConfig>;
+    onUpdateInstanceCriteria: (instanceId: string, criteria: CriteriaConfig) => void;
   }
   
   export interface ConnectionInstance {

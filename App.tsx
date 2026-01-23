@@ -1,88 +1,200 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { QRCodeScanner } from './components/qr-code-scanner/QRCodeScanner';
-import { ChatSession, User, AnalysisEntry, Message } from './types';
+import { ChatSession, User, AnalysisEntry, Message, CriteriaConfig, HeatmapAnalysis } from './types';
 import { ChatWindow } from './components/chat-window/ChatWindow';
 import { ConnectionInstance } from './components/sidebar/types';
 import { Sidebar } from './components/sidebar/Sidebar';
-
-const INITIAL_MOCK_SESSIONS: ChatSession[] = [
-  {
-    id: '1',
-    contactName: 'Vendas SP - Loja 01',
-    lastMessage: 'Qual o prazo de entrega?',
-    timestamp: '14:20',
-    customPrompt: 'Avalie se o vendedor tentou fazer up-selling e se explicou corretamente a política de frete.',
-    analysisHistory: [],
-    messages: [
-      { id: '1a', sender: 'client', text: 'Olá, gostaria de saber sobre o meu pedido #1234', timestamp: '14:05', contactName: 'João Silva' },
-      { id: '1b', sender: 'agent', text: 'Olá João! Vou verificar no sistema agora mesmo. Um momento.', timestamp: '14:07', contactName: 'João Silva' },
-      { id: '1c', sender: 'agent', text: 'Verifiquei aqui. Ele já saiu para entrega e deve chegar até as 18h. Já aproveitou para ver nossa promoção de kits de limpeza?', timestamp: '14:15', contactName: 'João Silva' },
-      { id: '1d', sender: 'client', text: 'Perfeito! Qual o prazo de entrega?', timestamp: '14:20', contactName: 'João Silva' }
-    ]
-  },
-  {
-    id: '2',
-    contactName: 'Suporte Técnico BR',
-    lastMessage: 'Muito obrigada pela ajuda!',
-    timestamp: '11:05',
-    customPrompt: 'Análise técnica de solução de problemas. O atendente foi direto ao ponto? Usou termos muito complexos?',
-    analysisHistory: [],
-    messages: [
-      { id: '2a', sender: 'client', text: 'Não consigo acessar minha conta.', timestamp: '10:50', contactName: 'Maria Oliveira' },
-      { id: '2b', sender: 'agent', text: 'Bom dia Maria. Você já tentou redefinir a senha através do link esqueci minha senha?', timestamp: '10:55', contactName: 'Maria Oliveira' },
-      { id: '2c', sender: 'client', text: 'Consegui agora! Muito obrigada pela ajuda!', timestamp: '11:05', contactName: 'Maria Oliveira' }
-    ]
-  },
-  {
-    id: '3',
-    contactName: 'SAC Premium',
-    lastMessage: 'Vou verificar seu caso com prioridade.',
-    timestamp: '09:30',
-    customPrompt: 'Avalie o nível de empatia e se o atendente demonstrou urgência adequada para clientes premium.',
-    analysisHistory: [],
-    messages: [
-      { id: '3a', sender: 'client', text: 'Boa dia, sou cliente há 5 anos e estou com um problema grave.', timestamp: '09:15', contactName: 'Carlos Mendes' },
-      { id: '3b', sender: 'agent', text: 'Bom dia Sr. Carlos! Reconheço sua fidelidade conosco. Por favor, me conte o que está acontecendo.', timestamp: '09:18', contactName: 'Carlos Mendes' },
-      { id: '3c', sender: 'client', text: 'Minha fatura veio com valor errado, quase o dobro do normal.', timestamp: '09:22', contactName: 'Carlos Mendes' },
-      { id: '3d', sender: 'agent', text: 'Entendo sua preocupação e peço desculpas pelo transtorno. Vou verificar seu caso com prioridade.', timestamp: '09:30', contactName: 'Carlos Mendes' }
-    ]
-  }
-];
+import { Dashboard } from './components/dashboard/Dashboard';
+import { SidebarResizer } from './components/resizer/SidebarResizer';
+import { whatsappAPI } from './src/services/whatsapp-api';
 
 const App: React.FC = () => {
   const [user, setUser] = useState<User | null>(null);
-  const [sessions, setSessions] = useState<ChatSession[]>(INITIAL_MOCK_SESSIONS);
+  const [sessions, setSessions] = useState<ChatSession[]>([]);
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
   const [showQRScanner, setShowQRScanner] = useState(false);
   const [isConnected, setIsConnected] = useState(false);
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
   const [connections, setConnections] = useState<ConnectionInstance[]>([]);
+  const [currentView, setCurrentView] = useState<'chats' | 'dashboard' | 'settings'>('chats');
+  const [instanceCriteria, setInstanceCriteria] = useState<Map<string, CriteriaConfig>>(new Map());
+  const [sidebarWidth, setSidebarWidth] = useState<number>(320); // Largura padrão da sidebar
+
+  // Conectar WebSocket e carregar instâncias ao fazer login
+  useEffect(() => {
+    if (!user) return;
+
+    whatsappAPI.connect();
+    loadInstances();
+
+    // Listener para mensagens do WhatsApp
+    const handleMessage = (data: { instanceId: string; message: any }) => {
+      console.log('📥 Mensagem recebida no frontend:', data);
+      const { instanceId, message } = data;
+      const contactName = message.contactName || message.from.split('@')[0];
+      
+      // Usar a flag isFromMe do backend para determinar o sender
+      const isFromMe = message.isFromMe || false;
+      const sender: 'client' | 'agent' = isFromMe ? 'agent' : 'client';
+      
+      // Identificar o número do cliente (sempre será o remoteJid, que está em 'from' quando recebida ou 'to' quando enviada)
+      // Quando isFromMe = false: cliente está em 'from'
+      // Quando isFromMe = true: cliente está em 'to'
+      const clientJid = isFromMe ? message.to : message.from;
+      
+      // Encontrar ou criar sessão para este contato (usar o JID do cliente)
+      const sessionId = `${instanceId}-${clientJid}`;
+      
+      setSessions(prev => {
+        let session = prev.find(s => s.id === sessionId);
+
+        if (!session) {
+          // Buscar critérios da instância para aplicar à nova sessão
+          let instanceCriteriaConfig: CriteriaConfig | undefined;
+          for (const [instId, criteria] of instanceCriteria.entries()) {
+            if (sessionId.startsWith(instId + '-')) {
+              instanceCriteriaConfig = criteria;
+              break;
+            }
+          }
+
+          session = {
+            id: sessionId,
+            contactName: contactName,
+            lastMessage: message.body,
+            timestamp: new Date(message.timestamp).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }),
+            messages: [],
+            analysisHistory: [],
+            criteriaConfig: instanceCriteriaConfig,
+          };
+          console.log('✅ Nova sessão criada:', sessionId, contactName, instanceCriteriaConfig ? 'com critérios' : 'sem critérios');
+          return [...prev, session];
+        }
+
+        // Verificar se a mensagem já existe (evitar duplicatas)
+        const messageExists = session.messages.some(m => m.id === message.id);
+        if (messageExists) {
+          console.log('⚠️ Mensagem duplicada ignorada:', message.id);
+          return prev;
+        }
+
+        // Adicionar mensagem à sessão
+        const newMessage: Message = {
+          id: message.id,
+          sender: sender,
+          text: message.body,
+          timestamp: new Date(message.timestamp).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }),
+          contactName: contactName,
+        };
+
+        console.log(`➕ Adicionando mensagem à sessão ${sessionId}:`, sender, message.body.substring(0, 30));
+        return prev.map(s => {
+          if (s.id === sessionId) {
+            return {
+              ...s,
+              messages: [...s.messages, newMessage],
+              lastMessage: message.body,
+              timestamp: newMessage.timestamp,
+            };
+          }
+          return s;
+        });
+      });
+    };
+
+    // Listener para conexões estabelecidas
+    const handleInstanceConnected = (data: { instanceId: string; phoneNumber?: string }) => {
+      loadInstances();
+    };
+
+    // Listener para desconexões
+    const handleInstanceDisconnected = (data: { instanceId: string }) => {
+      loadInstances();
+    };
+
+    whatsappAPI.on('message', handleMessage);
+    whatsappAPI.on('instance_connected', handleInstanceConnected);
+    whatsappAPI.on('instance_disconnected', handleInstanceDisconnected);
+
+    return () => {
+      whatsappAPI.off('message', handleMessage);
+      whatsappAPI.off('instance_connected', handleInstanceConnected);
+      whatsappAPI.off('instance_disconnected', handleInstanceDisconnected);
+    };
+  }, [user, instanceCriteria]);
+
+  const loadInstances = async () => {
+    try {
+      const instances = await whatsappAPI.getInstances();
+      const connectionInstances: ConnectionInstance[] = instances.map(inst => ({
+        id: inst.id,
+        name: inst.name,
+        status: inst.status === 'connected' ? 'active' : inst.status === 'connecting' || inst.status === 'qr_ready' ? 'connecting' : 'inactive',
+        connectedAt: inst.connectedAt ? new Date(inst.connectedAt).toLocaleString('pt-BR') : undefined,
+      }));
+      setConnections(connectionInstances);
+      setIsConnected(connectionInstances.some(c => c.status === 'active'));
+    } catch (error) {
+      console.error('Erro ao carregar instâncias:', error);
+    }
+  };
 
   const handleLogin = (e: React.FormEvent) => {
     e.preventDefault();
     setUser({ id: 'u1', email: 'admin@coach.ai', name: 'Gestor de Atendimento' });
   };
 
-  const handleConnectWhatsApp = () => {
-    const newConnection: ConnectionInstance = {
-      id: `conn-${Date.now()}`,
-      name: `Instância ${String(connections.length + 1).padStart(2, '0')}`,
-      status: 'active',
-      connectedAt: new Date().toLocaleString('pt-BR')
-    };
-    setConnections(prev => [...prev, newConnection]);
-    setIsConnected(true);
-    setShowQRScanner(false);
+  const handleConnectWhatsApp = async (instanceId: string) => {
+    try {
+      await loadInstances();
+      setIsConnected(true);
+      setShowQRScanner(false);
+    } catch (error) {
+      console.error('Erro ao conectar:', error);
+    }
   };
 
   const handleAddConnection = () => {
     setShowQRScanner(true);
   };
 
-  const handleDisconnectInstance = (id: string) => {
-    setConnections(prev => prev.filter(c => c.id !== id));
-    if (connections.length === 1) {
-      setIsConnected(false);
+  const handleDisconnectInstance = async (id: string) => {
+    try {
+      console.log('🗑️ Removendo instância:', id);
+      
+      // Remover sessões relacionadas primeiro (para feedback mais rápido)
+      setSessions(prev => {
+        const filtered = prev.filter(s => !s.id.startsWith(id + '-'));
+        console.log(`Removidas ${prev.length - filtered.length} sessões relacionadas`);
+        return filtered;
+      });
+      
+      // Remover da lista de conexões imediatamente (otimista)
+      setConnections(prev => prev.filter(c => c.id !== id));
+      
+      // Deletar no backend
+      await whatsappAPI.deleteInstance(id);
+      console.log('✅ Instância removida do backend');
+      
+      // Recarregar instâncias para garantir sincronização
+      await loadInstances();
+      
+      // Verificar se ainda há conexões ativas
+      const remainingConnections = connections.filter(c => c.id !== id);
+      if (remainingConnections.length === 0 || !remainingConnections.some(c => c.status === 'active')) {
+        setIsConnected(false);
+      }
+      
+      // Se estava visualizando uma sessão da instância removida, limpar seleção
+      if (activeSessionId && activeSessionId.startsWith(id + '-')) {
+        setActiveSessionId(null);
+      }
+      
+    } catch (error) {
+      console.error('❌ Erro ao remover instância:', error);
+      // Reverter mudanças em caso de erro
+      await loadInstances();
+      alert('Erro ao remover conexão. Tente novamente.');
     }
   };
 
@@ -90,6 +202,62 @@ const App: React.FC = () => {
     setSessions(prev => prev.map(s => 
       s.id === sessionId ? { ...s, customPrompt: newPrompt } : s
     ));
+  };
+
+  const updateSessionCriteria = (sessionId: string, criteria: CriteriaConfig) => {
+    setSessions(prev => prev.map(s => 
+      s.id === sessionId ? { ...s, criteriaConfig: criteria } : s
+    ));
+  };
+
+  const updateInstanceCriteria = (instanceId: string, criteria: CriteriaConfig) => {
+    setInstanceCriteria(prev => {
+      const newMap = new Map(prev);
+      newMap.set(instanceId, criteria);
+      return newMap;
+    });
+    
+    // Aplicar critérios a todas as sessões existentes e futuras desta instância
+    setSessions(prev => prev.map(s => {
+      if (s.id.startsWith(instanceId + '-')) {
+        return { ...s, criteriaConfig: criteria };
+      }
+      return s;
+    }));
+    
+    console.log(`✅ Critérios atualizados para instância ${instanceId}`);
+  };
+
+  // Aplicar critérios da instância quando novas sessões são criadas
+  useEffect(() => {
+    setSessions(prev => prev.map(session => {
+      // Se a sessão não tem critérios, buscar da instância
+      if (!session.criteriaConfig) {
+        for (const [instanceId, criteria] of instanceCriteria.entries()) {
+          if (session.id.startsWith(instanceId + '-')) {
+            return { ...session, criteriaConfig: criteria };
+          }
+        }
+      }
+      return session;
+    }));
+  }, [instanceCriteria]);
+
+  const handleSaveHeatmapAnalysis = (sessionId: string, heatmap: HeatmapAnalysis) => {
+    setSessions(prev => prev.map(s => {
+      if (s.id === sessionId) {
+        const newHeatmapHistory = s.heatmapHistory || [];
+        return {
+          ...s,
+          heatmapHistory: [{ 
+            id: Date.now().toString(), 
+            timestamp: new Date().toLocaleString('pt-BR'), 
+            analysis: heatmap 
+          }, ...newHeatmapHistory]
+        };
+      }
+      return s;
+    }));
   };
 
   const handleSaveAnalysis = (sessionId: string, analysis: AnalysisEntry) => {
@@ -136,7 +304,7 @@ const App: React.FC = () => {
 
             <div className="pt-4 border-t border-slate-100">
               <p className="text-[10px] text-slate-400 text-center">
-                Versão 1.0 • Modo Sandbox Ativo
+                Versão 1.0
               </p>
             </div>
           </div>
@@ -149,7 +317,7 @@ const App: React.FC = () => {
   if (showQRScanner) {
     return (
       <QRCodeScanner 
-        onConnect={handleConnectWhatsApp}
+        onConnect={(instanceId) => handleConnectWhatsApp(instanceId)}
         onCancel={() => setShowQRScanner(false)}
       />
     );
@@ -234,19 +402,40 @@ const App: React.FC = () => {
         </button>
       )}
 
-      <Sidebar 
-        sessions={sessions} 
-        activeSessionId={activeSessionId} 
-        onSelectSession={setActiveSessionId} 
-        userName={user.name} 
-        onLogout={() => setUser(null)}
-        onUpdateSessionPrompt={updateSessionPrompt}
-        onAddConnection={handleAddConnection}
-        isOpen={isSidebarOpen}
-        setIsOpen={setIsSidebarOpen}
-        connections={connections}
-        onDisconnectInstance={handleDisconnectInstance}
-      />
+      <div 
+        className="relative flex-shrink-0" 
+        style={{ 
+          width: isSidebarOpen ? `${sidebarWidth}px` : '0px', 
+          transition: isSidebarOpen ? 'width 0.2s' : 'none',
+          overflow: 'hidden'
+        }}
+      >
+        <Sidebar 
+          sessions={sessions} 
+          activeSessionId={activeSessionId} 
+          onSelectSession={setActiveSessionId} 
+          userName={user.name} 
+          onLogout={() => setUser(null)}
+          onUpdateSessionPrompt={updateSessionPrompt}
+          onAddConnection={handleAddConnection}
+          isOpen={isSidebarOpen}
+          setIsOpen={setIsSidebarOpen}
+          connections={connections}
+          onDisconnectInstance={handleDisconnectInstance}
+          currentView={currentView}
+          onViewChange={setCurrentView}
+          instanceCriteria={instanceCriteria}
+          onUpdateInstanceCriteria={updateInstanceCriteria}
+        />
+        {isSidebarOpen && (
+          <SidebarResizer
+            onResize={setSidebarWidth}
+            currentWidth={sidebarWidth}
+            minWidth={240}
+            maxWidth={600}
+          />
+        )}
+      </div>
       
       <main className="flex-1 flex flex-col overflow-hidden">
         {/* Mobile Navbar */}
@@ -257,12 +446,19 @@ const App: React.FC = () => {
            <h2 className="font-black text-slate-800 tracking-tight">Coach AI</h2>
         </div>
         
-        <ChatWindow 
-          session={activeSession} 
-          onUpdateSessionPrompt={updateSessionPrompt} 
-          onSaveAnalysis={handleSaveAnalysis}
-          onInjectMessage={handleInjectMessage}
-        />
+        {currentView === 'dashboard' ? (
+          <Dashboard sessions={sessions} connections={connections} />
+        ) : (
+          <ChatWindow 
+            session={activeSession} 
+            onUpdateSessionPrompt={updateSessionPrompt}
+            onUpdateSessionCriteria={updateSessionCriteria}
+            onSaveAnalysis={handleSaveAnalysis}
+            onSaveHeatmap={handleSaveHeatmapAnalysis}
+            onInjectMessage={handleInjectMessage}
+            instanceCriteria={instanceCriteria}
+          />
+        )}
       </main>
     </div>
   );
