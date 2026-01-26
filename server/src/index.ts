@@ -1,7 +1,7 @@
 import express from 'express';
+import cors from 'cors';
 import { createServer } from 'http';
 import { Server } from 'socket.io';
-import cors from 'cors';
 import { WhatsAppManager } from './whatsapp-manager.js';
 import { WhatsAppInstance, WhatsAppMessage } from './types.js';
 import { fileURLToPath } from 'url';

@@ -23,4 +23,5 @@ export interface SidebarProps {
     name: string;
     status: 'active' | 'inactive' | 'connecting';
     connectedAt?: string;
+    phoneNumber?: string;
   }

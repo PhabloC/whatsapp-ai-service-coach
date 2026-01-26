@@ -64,6 +64,8 @@ export class WhatsAppManager extends EventEmitter {
         printQRInTerminal: false,
         logger: pino({ level: 'silent' }),
         browser: ['Coach AI', 'Chrome', '1.0.0'],
+        // Habilitar sincronização do histórico de mensagens
+        syncFullHistory: true,
       });
 
       entry.socket = socket;
@@ -168,6 +170,48 @@ export class WhatsAppManager extends EventEmitter {
         }
       });
 
+      // Escutar histórico de mensagens quando a conexão é estabelecida
+      socket.ev.on('messaging-history.set', async (history) => {
+        console.log(`📚 Histórico de mensagens recebido para instância ${instanceId}`);
+        console.log(`📬 Chats: ${history.chats?.length || 0}, Mensagens: ${history.messages?.length || 0}`);
+        
+        if (history.messages && history.messages.length > 0) {
+          // Processar mensagens do histórico
+          for (const msg of history.messages) {
+            if (!msg.message) continue;
+
+            const isFromMe = msg.key.fromMe || false;
+            const remoteJid = msg.key.remoteJid || '';
+
+            // Ignorar mensagens de grupo
+            if (remoteJid.includes('@g.us')) {
+              continue;
+            }
+
+            // Determinar remetente e destinatário
+            const myJid = socket.user?.id || '';
+            const fromJid = isFromMe ? myJid : remoteJid;
+            const toJid = isFromMe ? remoteJid : myJid;
+
+            const message: WhatsAppMessage = {
+              id: msg.key.id || `${msg.key.remoteJid}-${msg.messageTimestamp || Date.now()}-${Math.random()}`,
+              from: fromJid,
+              to: toJid,
+              body: this.extractMessageText(msg.message),
+              timestamp: msg.messageTimestamp ? msg.messageTimestamp * 1000 : Date.now(),
+              isGroup: false,
+              contactName: this.extractContactName(remoteJid),
+              isFromMe: isFromMe,
+            };
+
+            // Emitir mensagem histórica
+            this.emit('message', instanceId, message);
+          }
+          
+          console.log(`✅ ${history.messages.length} mensagens históricas processadas para instância ${instanceId}`);
+        }
+      });
+
     } catch (error) {
       console.error(`Erro ao inicializar socket para ${instanceId}:`, error);
       entry.instance.status = 'disconnected';
@@ -232,4 +276,5 @@ export class WhatsAppManager extends EventEmitter {
       return false;
     }
   }
+
 }

@@ -77,11 +77,11 @@ Diferente de sistemas genéricos, cada conexão no dashboard pode ter seu própr
 | Componente | Arquivo | Descrição |
 |------------|---------|-----------|
 | App | `App.tsx` | Componente principal com gerenciamento de estado global |
-| Sidebar | `components/Sidebar.tsx` | Navegação, filtro de conversas e gestão de conexões |
-| ChatWindow | `components/ChatWindow.tsx` | Visualização de chat e painel de auditoria |
-| QRCodeScanner | `components/QRCodeScanner.tsx` | Fluxo de conexão com QR Code dinâmico |
-| MessageInjector | `components/MessageInjector.tsx` | Ferramenta de injeção de mensagens (Sandbox) |
-| EvolutionHistory | `components/EvolutionHistory.tsx` | Visualização do histórico de evolução |
+| Sidebar | `components/sidebar/Sidebar.tsx` | Navegação, filtro de conversas e gestão de conexões |
+| ChatWindow | `components/chat-window/ChatWindow.tsx` | Visualização de chat e painel de auditoria |
+| QRCodeScanner | `components/qr-code-scanner/QRCodeScanner.tsx` | Fluxo de conexão com QR Code dinâmico |
+| MessageInjector | `components/message-injector/MessageInjector.tsx` | Ferramenta de injeção de mensagens (Sandbox) |
+| EvolutionHistory | `components/evolution-history/EvolutionHistory.tsx` | Visualização do histórico de evolução |
 
 ### 6.2 Serviços
 | Serviço | Arquivo | Descrição |
@@ -91,7 +91,8 @@ Diferente de sistemas genéricos, cada conexão no dashboard pode ter seu própr
 ### 6.3 Tipos
 | Arquivo | Descrição |
 |---------|-----------|
-| `types.ts` | Definições de tipos TypeScript (Message, ChatSession, AnalysisResult, etc.) |
+| `types.ts` | Definições de tipos globais (Message, ChatSession, AnalysisResult, User, etc.) |
+| `components/*/types.ts` | Tipos específicos de cada componente (Props, interfaces locais) |
 
 ---
 

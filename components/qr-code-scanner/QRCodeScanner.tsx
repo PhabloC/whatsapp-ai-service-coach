@@ -108,13 +108,25 @@ export const QRCodeScanner: React.FC<QRCodeScannerProps> = ({ onConnect, onCance
 
   // Buscar status periodicamente (QR Code e conexão) se não recebeu via WebSocket
   useEffect(() => {
+    // #region agent log
+    fetch('http://127.0.0.1:7245/ingest/66e591df-86df-42d1-99fb-24432197f6e0',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'QRCodeScanner.tsx:110',message:'polling useEffect ENTRY',data:{instanceId,hasInstanceId:!!instanceId},timestamp:Date.now(),sessionId:'debug-session',runId:'post-fix',hypothesisId:'D'})}).catch(()=>{});
+    // #endregion
     if (!instanceId) return;
 
     let attempts = 0;
     const maxAttempts = 120; // 60 segundos (500ms * 120)
     let intervalId: NodeJS.Timeout | null = null;
+    let isCleanedUp = false; // Flag para evitar execução após cleanup
 
     const checkStatus = async () => {
+      // Verificar se foi limpo antes de executar
+      if (isCleanedUp) {
+        // #region agent log
+        fetch('http://127.0.0.1:7245/ingest/66e591df-86df-42d1-99fb-24432197f6e0',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'QRCodeScanner.tsx:122',message:'checkStatus SKIPPED - cleaned up',data:{},timestamp:Date.now(),sessionId:'debug-session',runId:'post-fix',hypothesisId:'D'})}).catch(()=>{});
+        // #endregion
+        return true; // Parar execução
+      }
+
       try {
         attempts++;
         
@@ -126,24 +138,33 @@ export const QRCodeScanner: React.FC<QRCodeScannerProps> = ({ onConnect, onCance
           console.log('✅ Conexão detectada via polling!');
           setStage('connected');
           setQrCode(''); // Limpar QR Code
-          if (intervalId) clearInterval(intervalId);
+          if (intervalId) {
+            clearInterval(intervalId);
+            intervalId = null;
+          }
           setTimeout(() => {
-            onConnect(instanceId);
+            if (!isCleanedUp) {
+              onConnect(instanceId);
+            }
           }, 1000);
           return true; // Conectado, parar polling
         }
         
-        // Verificar se tem QR Code
-        if (qrData.hasQR && qrData.qrCode && !qrCode) {
-          console.log('📱 QR Code encontrado via polling!');
-          setQrCode(qrData.qrCode);
-          setStage('scanning');
-          setCountdown(120);
-          // Continuar verificando conexão mesmo com QR Code
+        // Verificar se tem QR Code (usar estado atual via closure, mas verificar se não foi limpo)
+        if (qrData.hasQR && qrData.qrCode) {
+          // Usar setQrCode com callback para evitar stale closure
+          setQrCode(prevQrCode => {
+            if (!prevQrCode && !isCleanedUp) {
+              console.log('📱 QR Code encontrado via polling!');
+              setStage('scanning');
+              setCountdown(120);
+            }
+            return prevQrCode || qrData.qrCode || '';
+          });
         }
         
         // Se já tentou muitas vezes, reduzir frequência mas continuar
-        if (attempts >= maxAttempts && intervalId) {
+        if (attempts >= maxAttempts && intervalId && !isCleanedUp) {
           clearInterval(intervalId);
           // Continuar com polling mais lento
           intervalId = setInterval(checkStatus, 2000);
@@ -158,13 +179,27 @@ export const QRCodeScanner: React.FC<QRCodeScannerProps> = ({ onConnect, onCance
 
     // Polling agressivo inicial (500ms) para detectar mudanças rapidamente
     intervalId = setInterval(async () => {
-      await checkStatus();
+      const shouldStop = await checkStatus();
+      if (shouldStop && intervalId) {
+        clearInterval(intervalId);
+        intervalId = null;
+      }
     }, 500);
 
+    // #region agent log
+    fetch('http://127.0.0.1:7245/ingest/66e591df-86df-42d1-99fb-24432197f6e0',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'QRCodeScanner.tsx:175',message:'polling useEffect SETUP COMPLETE',data:{intervalIdSet:!!intervalId},timestamp:Date.now(),sessionId:'debug-session',runId:'post-fix',hypothesisId:'D'})}).catch(()=>{});
+    // #endregion
     return () => {
-      if (intervalId) clearInterval(intervalId);
+      // #region agent log
+      fetch('http://127.0.0.1:7245/ingest/66e591df-86df-42d1-99fb-24432197f6e0',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'QRCodeScanner.tsx:178',message:'polling useEffect CLEANUP',data:{intervalIdExists:!!intervalId},timestamp:Date.now(),sessionId:'debug-session',runId:'post-fix',hypothesisId:'D'})}).catch(()=>{});
+      // #endregion
+      isCleanedUp = true; // Marcar como limpo
+      if (intervalId) {
+        clearInterval(intervalId);
+        intervalId = null;
+      }
     };
-  }, [instanceId, onConnect, qrCode]);
+  }, [instanceId, onConnect]);
 
   const stageInfo = STAGE_INFO[stage];
 

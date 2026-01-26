@@ -6,7 +6,6 @@ import { ConnectionInstance } from './components/sidebar/types';
 import { Sidebar } from './components/sidebar/Sidebar';
 import { Dashboard } from './components/dashboard/Dashboard';
 import { SidebarResizer } from './components/resizer/SidebarResizer';
-import { Login } from './components/login/Login';
 import { whatsappAPI } from './src/services/whatsapp-api';
 
 const App: React.FC = () => {
@@ -30,6 +29,9 @@ const App: React.FC = () => {
 
     // Listener para mensagens do WhatsApp
     const handleMessage = (data: { instanceId: string; message: any }) => {
+      // #region agent log
+      fetch('http://127.0.0.1:7245/ingest/66e591df-86df-42d1-99fb-24432197f6e0',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'App.tsx:31',message:'handleMessage ENTRY',data:{instanceId:data.instanceId,messageId:data.message.id,instanceCriteriaSize:instanceCriteria.size,instanceCriteriaKeys:Array.from(instanceCriteria.keys())},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'B'})}).catch(()=>{});
+      // #endregion
       console.log('📥 Mensagem recebida no frontend:', data);
       const { instanceId, message } = data;
       const contactName = message.contactName || message.from.split('@')[0];
@@ -47,17 +49,26 @@ const App: React.FC = () => {
       const sessionId = `${instanceId}-${clientJid}`;
       
       setSessions(prev => {
+        // #region agent log
+        fetch('http://127.0.0.1:7245/ingest/66e591df-86df-42d1-99fb-24432197f6e0',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'App.tsx:48',message:'setSessions callback ENTRY',data:{sessionId,prevSessionsCount:prev.length,instanceCriteriaSize:instanceCriteria.size},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'B'})}).catch(()=>{});
+        // #endregion
         let session = prev.find(s => s.id === sessionId);
 
         if (!session) {
           // Buscar critérios da instância para aplicar à nova sessão
           let instanceCriteriaConfig: CriteriaConfig | undefined;
+          // #region agent log
+          fetch('http://127.0.0.1:7245/ingest/66e591df-86df-42d1-99fb-24432197f6e0',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'App.tsx:54',message:'BEFORE criteria lookup',data:{instanceCriteriaSize:instanceCriteria.size,instanceCriteriaKeys:Array.from(instanceCriteria.keys())},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'B'})}).catch(()=>{});
+          // #endregion
           for (const [instId, criteria] of instanceCriteria.entries()) {
             if (sessionId.startsWith(instId + '-')) {
               instanceCriteriaConfig = criteria;
               break;
             }
           }
+          // #region agent log
+          fetch('http://127.0.0.1:7245/ingest/66e591df-86df-42d1-99fb-24432197f6e0',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'App.tsx:59',message:'AFTER criteria lookup',data:{foundCriteria:!!instanceCriteriaConfig},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'B'})}).catch(()=>{});
+          // #endregion
 
           session = {
             id: sessionId,
@@ -124,20 +135,37 @@ const App: React.FC = () => {
     };
   }, [user, instanceCriteria]);
 
-  const loadInstances = async () => {
+  const loadInstances = async (): Promise<ConnectionInstance[]> => {
     try {
+      // #region agent log
+      fetch('http://127.0.0.1:7245/ingest/66e591df-86df-42d1-99fb-24432197f6e0',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'App.tsx:126',message:'loadInstances ENTRY',data:{},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'A'})}).catch(()=>{});
+      // #endregion
       const instances = await whatsappAPI.getInstances();
       const connectionInstances: ConnectionInstance[] = instances.map(inst => ({
         id: inst.id,
         name: inst.name,
         status: inst.status === 'connected' ? 'active' : inst.status === 'connecting' || inst.status === 'qr_ready' ? 'connecting' : 'inactive',
         connectedAt: inst.connectedAt ? new Date(inst.connectedAt).toLocaleString('pt-BR') : undefined,
+        phoneNumber: inst.phoneNumber,
       }));
+      // #region agent log
+      fetch('http://127.0.0.1:7245/ingest/66e591df-86df-42d1-99fb-24432197f6e0',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'App.tsx:135',message:'loadInstances BEFORE setConnections',data:{instancesCount:connectionInstances.length,instancesIds:connectionInstances.map(i=>i.id)},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'A'})}).catch(()=>{});
+      // #endregion
       setConnections(connectionInstances);
       setIsConnected(connectionInstances.some(c => c.status === 'active'));
+      // #region agent log
+      fetch('http://127.0.0.1:7245/ingest/66e591df-86df-42d1-99fb-24432197f6e0',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'App.tsx:137',message:'loadInstances AFTER setConnections',data:{instancesCount:connectionInstances.length},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'A'})}).catch(()=>{});
+      // #endregion
+      return connectionInstances;
     } catch (error) {
       console.error('Erro ao carregar instâncias:', error);
+      return [];
     }
+  };
+
+  const handleLogin = (e: React.FormEvent) => {
+    e.preventDefault();
+    setUser({ id: 'u1', email: 'admin@coach.ai', name: 'Gestor de Atendimento' });
   };
 
   const handleConnectWhatsApp = async (instanceId: string) => {
@@ -156,6 +184,9 @@ const App: React.FC = () => {
 
   const handleDisconnectInstance = async (id: string) => {
     try {
+      // #region agent log
+      fetch('http://127.0.0.1:7245/ingest/66e591df-86df-42d1-99fb-24432197f6e0',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'App.tsx:161',message:'handleDisconnectInstance ENTRY',data:{instanceId:id,connectionsCount:connections.length,connectionsIds:connections.map(c=>c.id)},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'A'})}).catch(()=>{});
+      // #endregion
       console.log('🗑️ Removendo instância:', id);
       
       // Remover sessões relacionadas primeiro (para feedback mais rápido)
@@ -172,11 +203,17 @@ const App: React.FC = () => {
       await whatsappAPI.deleteInstance(id);
       console.log('✅ Instância removida do backend');
       
-      // Recarregar instâncias para garantir sincronização
-      await loadInstances();
+      // Recarregar instâncias para garantir sincronização e obter estado atualizado
+      const updatedConnections = await loadInstances();
       
-      // Verificar se ainda há conexões ativas
-      const remainingConnections = connections.filter(c => c.id !== id);
+      // #region agent log
+      fetch('http://127.0.0.1:7245/ingest/66e591df-86df-42d1-99fb-24432197f6e0',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'App.tsx:204',message:'AFTER loadInstances - using returned value',data:{updatedConnectionsCount:updatedConnections.length,updatedConnectionsIds:updatedConnections.map(c=>c.id)},timestamp:Date.now(),sessionId:'debug-session',runId:'post-fix',hypothesisId:'A'})}).catch(()=>{});
+      // #endregion
+      // Verificar se ainda há conexões ativas usando o valor retornado (não o closure stale)
+      const remainingConnections = updatedConnections.filter(c => c.id !== id);
+      // #region agent log
+      fetch('http://127.0.0.1:7245/ingest/66e591df-86df-42d1-99fb-24432197f6e0',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'App.tsx:210',message:'AFTER filtering - using updated connections',data:{remainingConnectionsCount:remainingConnections.length,willSetIsConnectedFalse:remainingConnections.length === 0 || !remainingConnections.some(c => c.status === 'active')},timestamp:Date.now(),sessionId:'debug-session',runId:'post-fix',hypothesisId:'A'})}).catch(()=>{});
+      // #endregion
       if (remainingConnections.length === 0 || !remainingConnections.some(c => c.status === 'active')) {
         setIsConnected(false);
       }
@@ -187,6 +224,9 @@ const App: React.FC = () => {
       }
       
     } catch (error) {
+      // #region agent log
+      fetch('http://127.0.0.1:7245/ingest/66e591df-86df-42d1-99fb-24432197f6e0',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'App.tsx:194',message:'handleDisconnectInstance ERROR',data:{error:String(error)},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'A'})}).catch(()=>{});
+      // #endregion
       console.error('❌ Erro ao remover instância:', error);
       // Reverter mudanças em caso de erro
       await loadInstances();
@@ -224,19 +264,37 @@ const App: React.FC = () => {
     console.log(`✅ Critérios atualizados para instância ${instanceId}`);
   };
 
-  // Aplicar critérios da instância quando novas sessões são criadas
+  // Aplicar critérios da instância quando novas sessões são criadas ou critérios são atualizados
   useEffect(() => {
-    setSessions(prev => prev.map(session => {
-      // Se a sessão não tem critérios, buscar da instância
-      if (!session.criteriaConfig) {
-        for (const [instanceId, criteria] of instanceCriteria.entries()) {
-          if (session.id.startsWith(instanceId + '-')) {
-            return { ...session, criteriaConfig: criteria };
+    // #region agent log
+    fetch('http://127.0.0.1:7245/ingest/66e591df-86df-42d1-99fb-24432197f6e0',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'App.tsx:250',message:'criteria useEffect ENTRY',data:{instanceCriteriaSize:instanceCriteria.size,instanceCriteriaKeys:Array.from(instanceCriteria.keys())},timestamp:Date.now(),sessionId:'debug-session',runId:'post-fix',hypothesisId:'E'})}).catch(()=>{});
+    // #endregion
+    // Só atualizar se houver critérios configurados e sessões sem critérios
+    if (instanceCriteria.size === 0) return;
+    
+    setSessions(prev => {
+      // #region agent log
+      fetch('http://127.0.0.1:7245/ingest/66e591df-86df-42d1-99fb-24432197f6e0',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'App.tsx:254',message:'criteria useEffect setSessions callback',data:{prevSessionsCount:prev.length,instanceCriteriaSize:instanceCriteria.size},timestamp:Date.now(),sessionId:'debug-session',runId:'post-fix',hypothesisId:'E'})}).catch(()=>{});
+      // #endregion
+      let hasChanges = false;
+      const updated = prev.map(session => {
+        // Se a sessão não tem critérios, buscar da instância
+        if (!session.criteriaConfig) {
+          for (const [instanceId, criteria] of instanceCriteria.entries()) {
+            if (session.id.startsWith(instanceId + '-')) {
+              // #region agent log
+              fetch('http://127.0.0.1:7245/ingest/66e591df-86df-42d1-99fb-24432197f6e0',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'App.tsx:262',message:'criteria applied to session',data:{sessionId:session.id,instanceId},timestamp:Date.now(),sessionId:'debug-session',runId:'post-fix',hypothesisId:'E'})}).catch(()=>{});
+              // #endregion
+              hasChanges = true;
+              return { ...session, criteriaConfig: criteria };
+            }
           }
         }
-      }
-      return session;
-    }));
+        return session;
+      });
+      // Só retornar novo array se houver mudanças para evitar re-renders desnecessários
+      return hasChanges ? updated : prev;
+    });
   }, [instanceCriteria]);
 
   const handleSaveHeatmapAnalysis = (sessionId: string, heatmap: HeatmapAnalysis) => {
@@ -280,7 +338,33 @@ const App: React.FC = () => {
 
   // Tela de Login
   if (!user) {
-    return <Login onLogin={setUser} />;
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-slate-900 via-slate-800 to-emerald-900 p-6">
+        <div className="w-full max-w-md bg-white rounded-3xl shadow-2xl overflow-hidden border border-slate-800 animate-fade-in">
+          <div className="p-10 space-y-8">
+            <div className="text-center">
+              <div className="w-16 h-16 bg-emerald-500 rounded-2xl mx-auto flex items-center justify-center shadow-2xl shadow-emerald-500/40 mb-6">
+                <svg className="w-10 h-10 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.989-2.386l-.548-.547z" /></svg>
+              </div>
+              <h1 className="text-3xl font-black text-slate-800 tracking-tight">Coach AI</h1>
+              <p className="text-slate-400 font-bold text-[10px] uppercase tracking-[0.2em] mt-2">Plataforma de Auditoria</p>
+            </div>
+            
+            <form onSubmit={handleLogin} className="space-y-4">
+              <input type="email" defaultValue="admin@coach.ai" placeholder="E-mail Administrativo" className="w-full p-4 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-emerald-500 font-medium text-sm transition-all" required />
+              <input type="password" defaultValue="password" placeholder="Senha" className="w-full p-4 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-emerald-500 font-medium text-sm transition-all" required />
+              <button type="submit" className="w-full bg-slate-900 hover:bg-black text-white font-black py-4 rounded-xl shadow-xl transition-all active:scale-[0.98] tracking-widest text-sm">ENTRAR</button>
+            </form>
+
+            <div className="pt-4 border-t border-slate-100">
+              <p className="text-[10px] text-slate-400 text-center">
+                Versão 1.0
+              </p>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
   }
 
   // Tela de Conexão QR Code
