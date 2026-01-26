@@ -29,6 +29,9 @@ const App: React.FC = () => {
 
     // Listener para mensagens do WhatsApp
     const handleMessage = (data: { instanceId: string; message: any }) => {
+      // #region agent log
+      fetch('http://127.0.0.1:7245/ingest/66e591df-86df-42d1-99fb-24432197f6e0',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'App.tsx:31',message:'handleMessage ENTRY',data:{instanceId:data.instanceId,messageId:data.message.id,instanceCriteriaSize:instanceCriteria.size,instanceCriteriaKeys:Array.from(instanceCriteria.keys())},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'B'})}).catch(()=>{});
+      // #endregion
       console.log('📥 Mensagem recebida no frontend:', data);
       const { instanceId, message } = data;
       const contactName = message.contactName || message.from.split('@')[0];
@@ -46,17 +49,26 @@ const App: React.FC = () => {
       const sessionId = `${instanceId}-${clientJid}`;
       
       setSessions(prev => {
+        // #region agent log
+        fetch('http://127.0.0.1:7245/ingest/66e591df-86df-42d1-99fb-24432197f6e0',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'App.tsx:48',message:'setSessions callback ENTRY',data:{sessionId,prevSessionsCount:prev.length,instanceCriteriaSize:instanceCriteria.size},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'B'})}).catch(()=>{});
+        // #endregion
         let session = prev.find(s => s.id === sessionId);
 
         if (!session) {
           // Buscar critérios da instância para aplicar à nova sessão
           let instanceCriteriaConfig: CriteriaConfig | undefined;
+          // #region agent log
+          fetch('http://127.0.0.1:7245/ingest/66e591df-86df-42d1-99fb-24432197f6e0',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'App.tsx:54',message:'BEFORE criteria lookup',data:{instanceCriteriaSize:instanceCriteria.size,instanceCriteriaKeys:Array.from(instanceCriteria.keys())},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'B'})}).catch(()=>{});
+          // #endregion
           for (const [instId, criteria] of instanceCriteria.entries()) {
             if (sessionId.startsWith(instId + '-')) {
               instanceCriteriaConfig = criteria;
               break;
             }
           }
+          // #region agent log
+          fetch('http://127.0.0.1:7245/ingest/66e591df-86df-42d1-99fb-24432197f6e0',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'App.tsx:59',message:'AFTER criteria lookup',data:{foundCriteria:!!instanceCriteriaConfig},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'B'})}).catch(()=>{});
+          // #endregion
 
           session = {
             id: sessionId,
@@ -123,19 +135,31 @@ const App: React.FC = () => {
     };
   }, [user, instanceCriteria]);
 
-  const loadInstances = async () => {
+  const loadInstances = async (): Promise<ConnectionInstance[]> => {
     try {
+      // #region agent log
+      fetch('http://127.0.0.1:7245/ingest/66e591df-86df-42d1-99fb-24432197f6e0',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'App.tsx:126',message:'loadInstances ENTRY',data:{},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'A'})}).catch(()=>{});
+      // #endregion
       const instances = await whatsappAPI.getInstances();
       const connectionInstances: ConnectionInstance[] = instances.map(inst => ({
         id: inst.id,
         name: inst.name,
         status: inst.status === 'connected' ? 'active' : inst.status === 'connecting' || inst.status === 'qr_ready' ? 'connecting' : 'inactive',
         connectedAt: inst.connectedAt ? new Date(inst.connectedAt).toLocaleString('pt-BR') : undefined,
+        phoneNumber: inst.phoneNumber,
       }));
+      // #region agent log
+      fetch('http://127.0.0.1:7245/ingest/66e591df-86df-42d1-99fb-24432197f6e0',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'App.tsx:135',message:'loadInstances BEFORE setConnections',data:{instancesCount:connectionInstances.length,instancesIds:connectionInstances.map(i=>i.id)},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'A'})}).catch(()=>{});
+      // #endregion
       setConnections(connectionInstances);
       setIsConnected(connectionInstances.some(c => c.status === 'active'));
+      // #region agent log
+      fetch('http://127.0.0.1:7245/ingest/66e591df-86df-42d1-99fb-24432197f6e0',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'App.tsx:137',message:'loadInstances AFTER setConnections',data:{instancesCount:connectionInstances.length},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'A'})}).catch(()=>{});
+      // #endregion
+      return connectionInstances;
     } catch (error) {
       console.error('Erro ao carregar instâncias:', error);
+      return [];
     }
   };
 
@@ -160,6 +184,9 @@ const App: React.FC = () => {
 
   const handleDisconnectInstance = async (id: string) => {
     try {
+      // #region agent log
+      fetch('http://127.0.0.1:7245/ingest/66e591df-86df-42d1-99fb-24432197f6e0',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'App.tsx:161',message:'handleDisconnectInstance ENTRY',data:{instanceId:id,connectionsCount:connections.length,connectionsIds:connections.map(c=>c.id)},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'A'})}).catch(()=>{});
+      // #endregion
       console.log('🗑️ Removendo instância:', id);
       
       // Remover sessões relacionadas primeiro (para feedback mais rápido)
@@ -176,11 +203,17 @@ const App: React.FC = () => {
       await whatsappAPI.deleteInstance(id);
       console.log('✅ Instância removida do backend');
       
-      // Recarregar instâncias para garantir sincronização
-      await loadInstances();
+      // Recarregar instâncias para garantir sincronização e obter estado atualizado
+      const updatedConnections = await loadInstances();
       
-      // Verificar se ainda há conexões ativas
-      const remainingConnections = connections.filter(c => c.id !== id);
+      // #region agent log
+      fetch('http://127.0.0.1:7245/ingest/66e591df-86df-42d1-99fb-24432197f6e0',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'App.tsx:204',message:'AFTER loadInstances - using returned value',data:{updatedConnectionsCount:updatedConnections.length,updatedConnectionsIds:updatedConnections.map(c=>c.id)},timestamp:Date.now(),sessionId:'debug-session',runId:'post-fix',hypothesisId:'A'})}).catch(()=>{});
+      // #endregion
+      // Verificar se ainda há conexões ativas usando o valor retornado (não o closure stale)
+      const remainingConnections = updatedConnections.filter(c => c.id !== id);
+      // #region agent log
+      fetch('http://127.0.0.1:7245/ingest/66e591df-86df-42d1-99fb-24432197f6e0',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'App.tsx:210',message:'AFTER filtering - using updated connections',data:{remainingConnectionsCount:remainingConnections.length,willSetIsConnectedFalse:remainingConnections.length === 0 || !remainingConnections.some(c => c.status === 'active')},timestamp:Date.now(),sessionId:'debug-session',runId:'post-fix',hypothesisId:'A'})}).catch(()=>{});
+      // #endregion
       if (remainingConnections.length === 0 || !remainingConnections.some(c => c.status === 'active')) {
         setIsConnected(false);
       }
@@ -191,6 +224,9 @@ const App: React.FC = () => {
       }
       
     } catch (error) {
+      // #region agent log
+      fetch('http://127.0.0.1:7245/ingest/66e591df-86df-42d1-99fb-24432197f6e0',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'App.tsx:194',message:'handleDisconnectInstance ERROR',data:{error:String(error)},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'A'})}).catch(()=>{});
+      // #endregion
       console.error('❌ Erro ao remover instância:', error);
       // Reverter mudanças em caso de erro
       await loadInstances();
@@ -228,19 +264,37 @@ const App: React.FC = () => {
     console.log(`✅ Critérios atualizados para instância ${instanceId}`);
   };
 
-  // Aplicar critérios da instância quando novas sessões são criadas
+  // Aplicar critérios da instância quando novas sessões são criadas ou critérios são atualizados
   useEffect(() => {
-    setSessions(prev => prev.map(session => {
-      // Se a sessão não tem critérios, buscar da instância
-      if (!session.criteriaConfig) {
-        for (const [instanceId, criteria] of instanceCriteria.entries()) {
-          if (session.id.startsWith(instanceId + '-')) {
-            return { ...session, criteriaConfig: criteria };
+    // #region agent log
+    fetch('http://127.0.0.1:7245/ingest/66e591df-86df-42d1-99fb-24432197f6e0',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'App.tsx:250',message:'criteria useEffect ENTRY',data:{instanceCriteriaSize:instanceCriteria.size,instanceCriteriaKeys:Array.from(instanceCriteria.keys())},timestamp:Date.now(),sessionId:'debug-session',runId:'post-fix',hypothesisId:'E'})}).catch(()=>{});
+    // #endregion
+    // Só atualizar se houver critérios configurados e sessões sem critérios
+    if (instanceCriteria.size === 0) return;
+    
+    setSessions(prev => {
+      // #region agent log
+      fetch('http://127.0.0.1:7245/ingest/66e591df-86df-42d1-99fb-24432197f6e0',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'App.tsx:254',message:'criteria useEffect setSessions callback',data:{prevSessionsCount:prev.length,instanceCriteriaSize:instanceCriteria.size},timestamp:Date.now(),sessionId:'debug-session',runId:'post-fix',hypothesisId:'E'})}).catch(()=>{});
+      // #endregion
+      let hasChanges = false;
+      const updated = prev.map(session => {
+        // Se a sessão não tem critérios, buscar da instância
+        if (!session.criteriaConfig) {
+          for (const [instanceId, criteria] of instanceCriteria.entries()) {
+            if (session.id.startsWith(instanceId + '-')) {
+              // #region agent log
+              fetch('http://127.0.0.1:7245/ingest/66e591df-86df-42d1-99fb-24432197f6e0',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'App.tsx:262',message:'criteria applied to session',data:{sessionId:session.id,instanceId},timestamp:Date.now(),sessionId:'debug-session',runId:'post-fix',hypothesisId:'E'})}).catch(()=>{});
+              // #endregion
+              hasChanges = true;
+              return { ...session, criteriaConfig: criteria };
+            }
           }
         }
-      }
-      return session;
-    }));
+        return session;
+      });
+      // Só retornar novo array se houver mudanças para evitar re-renders desnecessários
+      return hasChanges ? updated : prev;
+    });
   }, [instanceCriteria]);
 
   const handleSaveHeatmapAnalysis = (sessionId: string, heatmap: HeatmapAnalysis) => {

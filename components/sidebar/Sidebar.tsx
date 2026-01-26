@@ -213,7 +213,9 @@ export const Sidebar: React.FC<SidebarProps> = ({
                         <div className="flex items-center gap-3">
                           <div className={`w-2 h-2 rounded-full ${getStatusColor(conn.status)}`} />
                           <div>
-                            <span className="text-xs font-bold text-slate-700">{conn.name}</span>
+                            <span className="text-xs font-bold text-slate-700">
+                              {conn.phoneNumber ? `+${conn.phoneNumber}` : conn.name}
+                            </span>
                             {conn.connectedAt && (
                               <p className="text-[10px] text-slate-400">Conectado: {conn.connectedAt}</p>
                             )}
@@ -276,7 +278,9 @@ export const Sidebar: React.FC<SidebarProps> = ({
                         <div className="flex items-center justify-between mb-2">
                           <div className="flex items-center gap-2">
                             <div className={`w-2 h-2 rounded-full ${getStatusColor(conn.status)}`} />
-                            <span className="text-xs font-black text-slate-800">{conn.name}</span>
+                            <span className="text-xs font-black text-slate-800">
+                              {conn.phoneNumber ? `+${conn.phoneNumber}` : conn.name}
+                            </span>
                           </div>
                           <button
                             onClick={() => setEditingCriteriaInstanceId(conn.id)}

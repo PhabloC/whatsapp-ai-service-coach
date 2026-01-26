@@ -28,10 +28,29 @@ export class WhatsAppAPI {
   private listeners: Map<string, Set<Function>> = new Map();
 
   connect() {
+    // #region agent log
+    fetch('http://127.0.0.1:7245/ingest/66e591df-86df-42d1-99fb-24432197f6e0',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'whatsapp-api.ts:30',message:'connect() ENTRY',data:{socketExists:!!this.socket,socketConnected:this.socket?.connected},timestamp:Date.now(),sessionId:'debug-session',runId:'post-fix',hypothesisId:'C'})}).catch(()=>{});
+    // #endregion
     if (this.socket?.connected) {
+      // #region agent log
+      fetch('http://127.0.0.1:7245/ingest/66e591df-86df-42d1-99fb-24432197f6e0',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'whatsapp-api.ts:32',message:'connect() EARLY RETURN',data:{reason:'already connected'},timestamp:Date.now(),sessionId:'debug-session',runId:'post-fix',hypothesisId:'C'})}).catch(()=>{});
+      // #endregion
       return;
     }
 
+    // Limpar socket anterior se existir (mas não conectado)
+    if (this.socket) {
+      // #region agent log
+      fetch('http://127.0.0.1:7245/ingest/66e591df-86df-42d1-99fb-24432197f6e0',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'whatsapp-api.ts:38',message:'connect() CLEANING OLD SOCKET',data:{},timestamp:Date.now(),sessionId:'debug-session',runId:'post-fix',hypothesisId:'C'})}).catch(()=>{});
+      // #endregion
+      this.socket.removeAllListeners();
+      this.socket.disconnect();
+      this.socket = null;
+    }
+
+    // #region agent log
+    fetch('http://127.0.0.1:7245/ingest/66e591df-86df-42d1-99fb-24432197f6e0',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'whatsapp-api.ts:45',message:'connect() CREATING NEW SOCKET',data:{},timestamp:Date.now(),sessionId:'debug-session',runId:'post-fix',hypothesisId:'C'})}).catch(()=>{});
+    // #endregion
     // Usar a URL base diretamente, Socket.io detecta automaticamente o protocolo
     this.socket = io(API_BASE_URL, {
       transports: ['websocket', 'polling'],
