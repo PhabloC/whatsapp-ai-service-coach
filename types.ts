@@ -32,6 +32,8 @@ export interface ChatSession {
   heatmapHistory?: HeatmapHistoryEntry[];
   markedAsSale?: boolean;
   salesScriptHistory?: SalesScriptHistoryEntry[];
+  profilePicture?: string | null; // URL da foto de perfil do contato
+  contactJid?: string; // JID do contato para buscar foto
 }
 
 export interface AnalysisResult {

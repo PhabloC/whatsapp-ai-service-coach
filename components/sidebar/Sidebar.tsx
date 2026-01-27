@@ -158,10 +158,26 @@ export const Sidebar: React.FC<SidebarProps> = ({
                     }}
                     className={`w-full p-4 flex items-center gap-3 transition-all hover:bg-white ${activeSessionId === session.id ? 'bg-white border-r-4 border-emerald-500 shadow-sm' : ''}`}
                   >
-                    <div className={`relative w-12 h-12 rounded-full flex-shrink-0 flex items-center justify-center text-white font-bold text-lg shadow-sm ${activeSessionId === session.id ? 'bg-emerald-500' : 'bg-slate-300'}`}>
-                      {session.contactName.charAt(0)}
+                    <div className={`relative w-12 h-12 rounded-full flex-shrink-0 shadow-sm overflow-hidden ${activeSessionId === session.id ? 'bg-emerald-500' : 'bg-slate-300'}`}>
+                      {session.profilePicture ? (
+                        <img 
+                          src={session.profilePicture} 
+                          alt={session.contactName}
+                          className="absolute inset-0 w-full h-full object-cover"
+                          onError={(e) => {
+                            // Se a imagem falhar, mostrar inicial
+                            const target = e.target as HTMLImageElement;
+                            target.style.display = 'none';
+                            const fallback = target.parentElement?.querySelector('.avatar-fallback');
+                            if (fallback) fallback.classList.remove('hidden');
+                          }}
+                        />
+                      ) : null}
+                      <span className={`avatar-fallback absolute inset-0 flex items-center justify-center text-white font-bold text-lg ${session.profilePicture ? 'hidden' : ''}`}>
+                        {session.contactName.charAt(0)}
+                      </span>
                       {session.analysisHistory.length > 0 && (
-                        <div className="absolute -top-1 -right-1 w-5 h-5 bg-emerald-500 rounded-full flex items-center justify-center text-[10px] font-bold text-white border-2 border-white">
+                        <div className="absolute -top-1 -right-1 w-5 h-5 bg-emerald-500 rounded-full flex items-center justify-center text-[10px] font-bold text-white border-2 border-white z-10">
                           {session.analysisHistory.length}
                         </div>
                       )}

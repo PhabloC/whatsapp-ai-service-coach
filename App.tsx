@@ -39,12 +39,35 @@ const App: React.FC = () => {
   const [currentView, setCurrentView] = useState<'chats' | 'dashboard' | 'settings'>('chats');
   const [instanceCriteria, setInstanceCriteria] = useState<Map<string, CriteriaConfig>>(new Map());
 
+  // Estado para controlar carregamento inicial das conexões
+  const [loadingConnections, setLoadingConnections] = useState(true);
+
   // Conectar WebSocket e carregar instâncias ao fazer login
   useEffect(() => {
     if (!user) return;
 
-    whatsappAPI.connect();
-    loadInstances();
+    const initializeConnections = async () => {
+      setLoadingConnections(true);
+      try {
+        whatsappAPI.connect();
+        
+        // Tentar restaurar sessão automaticamente
+        const restoredInstance = await whatsappAPI.autoRestoreSession();
+        
+        if (restoredInstance) {
+          console.log('✅ Sessão restaurada automaticamente:', restoredInstance.id);
+        }
+        
+        // Carregar todas as instâncias (incluindo a restaurada)
+        await loadInstances();
+      } catch (error) {
+        console.error('Erro ao inicializar conexões:', error);
+      } finally {
+        setLoadingConnections(false);
+      }
+    };
+
+    initializeConnections();
 
     const handleMessage = (data: { instanceId: string; message: any }) => {
       const { instanceId, message } = data;
@@ -66,6 +89,7 @@ const App: React.FC = () => {
             }
           }
 
+          // Criar sessão com JID para buscar foto depois
           session = {
             id: sessionId,
             contactName: contactName,
@@ -74,7 +98,21 @@ const App: React.FC = () => {
             messages: [],
             analysisHistory: [],
             criteriaConfig: instanceCriteriaConfig,
+            contactJid: clientJid, // Armazenar JID para buscar foto
+            profilePicture: undefined, // Será preenchido assincronamente
           };
+
+          // Buscar foto de perfil assincronamente (não bloqueia a criação da sessão)
+          whatsappAPI.getProfilePicture(instanceId, clientJid).then(profilePic => {
+            if (profilePic) {
+              setSessions(prevSessions => 
+                prevSessions.map(s => 
+                  s.id === sessionId ? { ...s, profilePicture: profilePic } : s
+                )
+              );
+            }
+          }).catch(err => console.error('Erro ao buscar foto de perfil:', err));
+
           return [...prev, session];
         }
 
@@ -360,6 +398,11 @@ const App: React.FC = () => {
         onCancel={() => setShowQRScanner(false)}
       />
     );
+  }
+
+  // Tela de carregamento enquanto verifica conexões existentes
+  if (loadingConnections) {
+    return <LoadingScreen />;
   }
 
   // Tela de boas-vindas (sem conexão)

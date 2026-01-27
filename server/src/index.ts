@@ -129,14 +129,112 @@ app.post('/api/instances/:id/send', async (req, res) => {
   }
 });
 
+// Obter foto de perfil de um contato
+app.get('/api/instances/:id/profile-picture/:jid', async (req, res) => {
+  try {
+    const { id, jid } = req.params;
+    const highRes = req.query.highRes === 'true';
+    
+    const url = await whatsappManager.getProfilePicture(id, jid, highRes);
+    
+    res.json({ jid, profilePicture: url });
+  } catch (error: any) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Obter fotos de perfil de múltiplos contatos
+app.post('/api/instances/:id/profile-pictures', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { jids, highRes } = req.body;
+    
+    if (!jids || !Array.isArray(jids)) {
+      return res.status(400).json({ error: 'Campo "jids" deve ser um array de JIDs' });
+    }
+    
+    const results = await whatsappManager.getProfilePictures(id, jids, highRes === true);
+    
+    // Converter Map para objeto
+    const profilePictures: { [jid: string]: string | null } = {};
+    results.forEach((url, jid) => {
+      profilePictures[jid] = url;
+    });
+    
+    res.json({ profilePictures });
+  } catch (error: any) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Obter informações completas de um contato
+app.get('/api/instances/:id/contacts/:jid', async (req, res) => {
+  try {
+    const { id, jid } = req.params;
+    
+    const contactInfo = await whatsappManager.getContactInfo(id, jid);
+    if (!contactInfo) {
+      return res.status(404).json({ error: 'Não foi possível obter informações do contato' });
+    }
+    
+    res.json(contactInfo);
+  } catch (error: any) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Verificar se número está no WhatsApp
+app.get('/api/instances/:id/check/:phoneNumber', async (req, res) => {
+  try {
+    const { id, phoneNumber } = req.params;
+    
+    const exists = await whatsappManager.isOnWhatsApp(id, phoneNumber);
+    res.json({ phoneNumber, exists });
+  } catch (error: any) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
 // Health check
 app.get('/health', (req, res) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() });
 });
 
+// Listar sessões salvas no disco (para reconexão)
+app.get('/api/sessions/saved', (req, res) => {
+  const savedSessions = whatsappManager.getSavedSessionIds();
+  res.json({ sessions: savedSessions });
+});
+
+// Restaurar/reconectar uma sessão salva
+app.post('/api/sessions/:id/restore', async (req, res) => {
+  try {
+    const { id } = req.params;
+    
+    // Verificar se já está na memória e conectada
+    const existingInstance = whatsappManager.getInstance(id);
+    if (existingInstance && existingInstance.status === 'connected') {
+      return res.json(existingInstance);
+    }
+    
+    const instance = await whatsappManager.restoreInstance(id);
+    if (!instance) {
+      return res.status(404).json({ error: 'Sessão não encontrada ou não autenticada' });
+    }
+    
+    res.json(instance);
+  } catch (error: any) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
 const PORT = process.env.PORT || 3001;
 
-httpServer.listen(PORT, () => {
+httpServer.listen(PORT, async () => {
   console.log(`🚀 Servidor rodando na porta ${PORT}`);
   console.log(`📡 WebSocket disponível em ws://localhost:${PORT}`);
+  
+  // Restaurar sessões salvas automaticamente
+  console.log('🔄 Iniciando restauração automática de sessões...');
+  await whatsappManager.restoreAllSessions();
 });

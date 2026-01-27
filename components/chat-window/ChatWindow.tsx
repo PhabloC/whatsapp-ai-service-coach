@@ -216,8 +216,23 @@ export const ChatWindow: React.FC<ChatWindowProps> = ({
       <div className="flex-1 flex flex-col bg-[#e5ddd5] dark:bg-slate-900 overflow-hidden relative">
         <div className="p-4 bg-white border-b flex items-center justify-between z-10 shadow-sm">
           <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-full bg-emerald-100 text-emerald-600 flex items-center justify-center font-bold">
-              {session.contactName.charAt(0)}
+            <div className="relative w-10 h-10 rounded-full bg-emerald-100 overflow-hidden">
+              {session.profilePicture ? (
+                <img 
+                  src={session.profilePicture} 
+                  alt={session.contactName}
+                  className="absolute inset-0 w-full h-full object-cover"
+                  onError={(e) => {
+                    const target = e.target as HTMLImageElement;
+                    target.style.display = 'none';
+                    const fallback = target.parentElement?.querySelector('.avatar-fallback');
+                    if (fallback) fallback.classList.remove('hidden');
+                  }}
+                />
+              ) : null}
+              <span className={`avatar-fallback absolute inset-0 flex items-center justify-center text-emerald-600 font-bold ${session.profilePicture ? 'hidden' : ''}`}>
+                {session.contactName.charAt(0)}
+              </span>
             </div>
             <div>
               <h3 className="font-semibold text-slate-800">{session.contactName}</h3>
