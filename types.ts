@@ -5,6 +5,7 @@ export interface Message {
   text: string;
   timestamp: string;
   contactName: string;
+  rawTimestamp?: number; // Timestamp original em milissegundos para ordenação
 }
 
 export interface AnalysisEntry {
@@ -25,6 +26,7 @@ export interface ChatSession {
   contactName: string;
   lastMessage: string;
   timestamp: string;
+  lastMessageTimestamp?: number; // Timestamp em ms para ordenação
   messages: Message[];
   customPrompt?: string;
   analysisHistory: AnalysisEntry[];

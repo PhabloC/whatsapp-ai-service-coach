@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { AnalysisEntry, CriteriaConfig, HeatmapAnalysis, SalesScript } from '@/types';
 import { ChatWindowProps } from './types';
 import { analyzeConversation, analyzeConversationWithHeatmap, generateSalesScript } from '@/geminiService';
@@ -33,6 +33,9 @@ export const ChatWindow: React.FC<ChatWindowProps> = ({
   const [showSalesScriptModal, setShowSalesScriptModal] = useState(false);
   const [isGeneratingScript, setIsGeneratingScript] = useState(false);
   const [currentSalesScript, setCurrentSalesScript] = useState<SalesScript | null>(null);
+  
+  // Ref para o container de mensagens (auto-scroll)
+  const messagesContainerRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     if (session) {
@@ -41,6 +44,18 @@ export const ChatWindow: React.FC<ChatWindowProps> = ({
       setSelectedHeatmapId(session.heatmapHistory && session.heatmapHistory.length > 0 ? session.heatmapHistory[0].id : null);
     }
   }, [session]);
+
+  // Auto-scroll para o final das mensagens quando a sessão muda ou novas mensagens chegam
+  useEffect(() => {
+    if (messagesContainerRef.current && session?.messages?.length) {
+      // Usar setTimeout para garantir que o DOM foi atualizado
+      setTimeout(() => {
+        if (messagesContainerRef.current) {
+          messagesContainerRef.current.scrollTop = messagesContainerRef.current.scrollHeight;
+        }
+      }, 100);
+    }
+  }, [session?.id, session?.messages?.length]);
 
   const handleAnalyze = async () => {
     if (!session) return;
@@ -296,7 +311,7 @@ export const ChatWindow: React.FC<ChatWindowProps> = ({
           </div>
         )}
 
-        <div className="flex-1 overflow-y-auto p-4 space-y-4">
+        <div ref={messagesContainerRef} className="flex-1 overflow-y-auto p-4 space-y-4">
           {session.messages.map((m) => (
             <div key={m.id} className={`flex ${m.sender === 'agent' ? 'justify-end' : 'justify-start'} animate-fade-in`}>
               <div className={`max-w-[70%] p-3 rounded-xl shadow-sm ${m.sender === 'agent' ? 'bg-[#dcf8c6]' : 'bg-white'}`}>

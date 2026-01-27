@@ -76,9 +76,21 @@ const App: React.FC = () => {
       const sender: 'client' | 'agent' = isFromMe ? 'agent' : 'client';
       const clientJid = isFromMe ? message.to : message.from;
       const sessionId = `${instanceId}-${clientJid}`;
+      const messageTimestamp = message.timestamp; // timestamp em milissegundos
+      const isHistorical = message.isHistorical || false;
       
       setSessions(prev => {
         let session = prev.find(s => s.id === sessionId);
+
+        // Criar nova mensagem
+        const newMessage: Message = {
+          id: message.id,
+          sender: sender,
+          text: message.body,
+          timestamp: new Date(messageTimestamp).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }),
+          contactName: contactName,
+          rawTimestamp: messageTimestamp, // Guardar timestamp original para ordenação
+        };
 
         if (!session) {
           let instanceCriteriaConfig: CriteriaConfig | undefined;
@@ -89,20 +101,21 @@ const App: React.FC = () => {
             }
           }
 
-          // Criar sessão com JID para buscar foto depois
+          // Criar sessão com a primeira mensagem
           session = {
             id: sessionId,
             contactName: contactName,
             lastMessage: message.body,
-            timestamp: new Date(message.timestamp).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }),
-            messages: [],
+            timestamp: new Date(messageTimestamp).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }),
+            lastMessageTimestamp: messageTimestamp,
+            messages: [newMessage],
             analysisHistory: [],
             criteriaConfig: instanceCriteriaConfig,
-            contactJid: clientJid, // Armazenar JID para buscar foto
-            profilePicture: undefined, // Será preenchido assincronamente
+            contactJid: clientJid,
+            profilePicture: undefined,
           };
 
-          // Buscar foto de perfil assincronamente (não bloqueia a criação da sessão)
+          // Buscar foto de perfil assincronamente
           whatsappAPI.getProfilePicture(instanceId, clientJid).then(profilePic => {
             if (profilePic) {
               setSessions(prevSessions => 
@@ -113,22 +126,34 @@ const App: React.FC = () => {
             }
           }).catch(err => console.error('Erro ao buscar foto de perfil:', err));
 
-          return [...prev, session];
+          // Adicionar nova sessão e ordenar por última mensagem (mais recente primeiro)
+          const updatedSessions = [...prev, session].sort((a, b) => {
+            const aTime = a.lastMessageTimestamp || 0;
+            const bTime = b.lastMessageTimestamp || 0;
+            return bTime - aTime; // Ordem decrescente (mais recente primeiro)
+          });
+
+          return updatedSessions;
         }
 
+        // Verificar se mensagem já existe
         const messageExists = session.messages.some(m => m.id === message.id);
         if (messageExists) return prev;
 
-        const newMessage: Message = {
-          id: message.id,
-          sender: sender,
-          text: message.body,
-          timestamp: new Date(message.timestamp).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }),
-          contactName: contactName,
-        };
-
-        return prev.map(s => {
+        // Atualizar sessão existente
+        const updatedSessions = prev.map(s => {
           if (s.id === sessionId) {
+            // Adicionar mensagem e ordenar por timestamp
+            const updatedMessages = [...s.messages, newMessage].sort((a, b) => {
+              const aTime = a.rawTimestamp || 0;
+              const bTime = b.rawTimestamp || 0;
+              return aTime - bTime;
+            });
+
+            // Encontrar a mensagem mais recente para atualizar lastMessage
+            const latestMessage = updatedMessages[updatedMessages.length - 1];
+            const latestTimestamp = latestMessage.rawTimestamp || messageTimestamp;
+
             // Atualizar nome do contato se recebemos um nome melhor (não numérico)
             const currentNameIsNumeric = /^\+?\d[\d\s\-()]+$/.test(s.contactName);
             const newNameIsNumeric = /^\+?\d[\d\s\-()]+$/.test(contactName);
@@ -136,14 +161,21 @@ const App: React.FC = () => {
             
             return {
               ...s,
-              messages: [...s.messages, newMessage],
-              lastMessage: message.body,
-              timestamp: newMessage.timestamp,
-              // Atualizar nome se o novo nome for melhor (nome real vs número)
+              messages: updatedMessages,
+              lastMessage: latestMessage.text,
+              timestamp: new Date(latestTimestamp).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }),
+              lastMessageTimestamp: latestTimestamp,
               ...(shouldUpdateName && { contactName: contactName }),
             };
           }
           return s;
+        });
+
+        // Ordenar sessões por última mensagem (mais recente primeiro)
+        return updatedSessions.sort((a, b) => {
+          const aTime = a.lastMessageTimestamp || 0;
+          const bTime = b.lastMessageTimestamp || 0;
+          return bTime - aTime;
         });
       });
     };
