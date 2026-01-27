@@ -32,8 +32,7 @@ interface MessageCache {
 // Mapeamento LID <-> PN (Phone Number)
 // Na v7, WhatsApp usa LIDs (Local Identifiers) para identificar usuários
 interface LidPnMapping {
-  [lid: string]: string; // LID -> PN
-  [pn: string]: string;  // PN -> LID
+  [key: string]: string; // LID -> PN ou PN -> LID
 }
 
 // Cache para fotos de perfil
@@ -449,8 +448,6 @@ export class WhatsAppManager extends EventEmitter {
             // Gerar QR Code com configurações otimizadas para velocidade
             const qrCodeDataUrl = await QRCode.toDataURL(qr, {
               errorCorrectionLevel: 'M',
-              type: 'image/png',
-              quality: 0.92,
               margin: 1,
               width: 300
             });
@@ -755,9 +752,9 @@ export class WhatsAppManager extends EventEmitter {
 
       // blocklist.update - Lista de bloqueio atualizada
       socket.ev.on('blocklist.update', (update) => {
-        console.log(`🚫 Lista de bloqueio atualizada para instância ${instanceId}: ${update.action} - ${update.blocklist.join(', ')}`);
+        console.log(`🚫 Lista de bloqueio atualizada para instância ${instanceId}: ${update.type} - ${update.blocklist.join(', ')}`);
         this.emit('blocklistUpdate', instanceId, {
-          action: update.action, // 'add' | 'remove'
+          action: update.type, // 'add' | 'remove'
           blocklist: update.blocklist,
         });
       });
@@ -1065,7 +1062,8 @@ export class WhatsAppManager extends EventEmitter {
     }
 
     try {
-      await entry.socket.fetchMessageHistory(count, undefined, undefined);
+      // fetchMessageHistory requer oldestMsgKey válido - usar null para buscar do início
+      await (entry.socket as any).fetchMessageHistory(count, null, null);
       console.log(`📜 Solicitado histórico de ${count} mensagens para instância ${instanceId}`);
       return true;
     } catch (error) {
@@ -1084,8 +1082,14 @@ export class WhatsAppManager extends EventEmitter {
       return null;
     }
 
+    // Verificar se a mensagem tem key válida
+    if (!message.key) {
+      console.error('Mensagem sem key válida');
+      return null;
+    }
+
     try {
-      const updated = await entry.socket.updateMediaMessage(message);
+      const updated = await entry.socket.updateMediaMessage(message as any);
       console.log(`🖼️ Mídia atualizada para mensagem ${message.key?.id}`);
       return updated;
     } catch (error) {
@@ -1103,9 +1107,15 @@ export class WhatsAppManager extends EventEmitter {
       return null;
     }
 
+    // Verificar se a mensagem tem key válida
+    if (!message.key) {
+      console.error('Mensagem sem key válida');
+      return null;
+    }
+
     try {
       const buffer = await downloadMediaMessage(
-        message,
+        message as any,
         'buffer',
         {},
         {
@@ -1130,7 +1140,8 @@ export class WhatsAppManager extends EventEmitter {
     }
 
     try {
-      const [result] = await entry.socket.onWhatsApp(phoneNumber);
+      const results = await entry.socket.onWhatsApp(phoneNumber);
+      const result = results?.[0];
       return result?.exists || false;
     } catch (error) {
       console.error(`Erro ao verificar número:`, error);
