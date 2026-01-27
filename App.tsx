@@ -16,6 +16,78 @@ import { useAuth } from './src/hooks/useAuth';
 
 type AuthPage = 'login' | 'register' | 'reset';
 
+// Constantes para localStorage
+const STORAGE_KEY_SESSIONS = 'whatsapp_coach_sessions';
+const STORAGE_KEY_CRITERIA = 'whatsapp_coach_criteria';
+
+// Funções utilitárias para persistência
+const loadSessionsFromStorage = (): ChatSession[] => {
+  try {
+    const stored = localStorage.getItem(STORAGE_KEY_SESSIONS);
+    console.log('📦 Carregando sessões do localStorage:', stored ? 'encontrado' : 'vazio');
+    if (stored) {
+      const parsed = JSON.parse(stored);
+      // Validar estrutura básica
+      if (Array.isArray(parsed)) {
+        console.log(`📦 ${parsed.length} sessões carregadas do localStorage`);
+        return parsed;
+      }
+    }
+  } catch (error) {
+    console.error('Erro ao carregar sessões do localStorage:', error);
+  }
+  return [];
+};
+
+const saveSessionsToStorage = (sessions: ChatSession[]) => {
+  try {
+    // Limitar quantidade de mensagens por sessão para não estourar o localStorage
+    const sessionsToStore = sessions.map(session => ({
+      ...session,
+      messages: session.messages.slice(-500), // Manter últimas 500 mensagens por conversa
+    }));
+    localStorage.setItem(STORAGE_KEY_SESSIONS, JSON.stringify(sessionsToStore));
+    console.log(`💾 ${sessions.length} sessões salvas no localStorage`);
+  } catch (error) {
+    console.error('Erro ao salvar sessões no localStorage:', error);
+    // Se der erro de quota, tentar salvar com menos mensagens
+    try {
+      const minimalSessions = sessions.map(session => ({
+        ...session,
+        messages: session.messages.slice(-100),
+        analysisHistory: session.analysisHistory.slice(-10),
+        heatmapHistory: session.heatmapHistory?.slice(-5),
+        salesScriptHistory: session.salesScriptHistory?.slice(-5),
+      }));
+      localStorage.setItem(STORAGE_KEY_SESSIONS, JSON.stringify(minimalSessions));
+    } catch {
+      console.error('Não foi possível salvar sessões mesmo com dados reduzidos');
+    }
+  }
+};
+
+const loadCriteriaFromStorage = (): Map<string, CriteriaConfig> => {
+  try {
+    const stored = localStorage.getItem(STORAGE_KEY_CRITERIA);
+    if (stored) {
+      const parsed = JSON.parse(stored);
+      return new Map(Object.entries(parsed));
+    }
+  } catch (error) {
+    console.error('Erro ao carregar critérios do localStorage:', error);
+  }
+  return new Map();
+};
+
+const saveCriteriaToStorage = (criteria: Map<string, CriteriaConfig>) => {
+  try {
+    const obj = Object.fromEntries(criteria);
+    localStorage.setItem(STORAGE_KEY_CRITERIA, JSON.stringify(obj));
+  } catch (error) {
+    console.error('Erro ao salvar critérios no localStorage:', error);
+  }
+};
+
 const App: React.FC = () => {
   const { 
     user, 
@@ -41,14 +113,56 @@ const App: React.FC = () => {
 
   // Estado para controlar carregamento inicial das conexões
   const [loadingConnections, setLoadingConnections] = useState(true);
+  // Flag para indicar se já carregou do localStorage
+  const [hasLoadedFromStorage, setHasLoadedFromStorage] = useState(false);
+
+  // Carregar sessões do localStorage quando o user logar
+  useEffect(() => {
+    if (user && !hasLoadedFromStorage) {
+      const storedSessions = loadSessionsFromStorage();
+      const storedCriteria = loadCriteriaFromStorage();
+      
+      if (storedSessions.length > 0) {
+        console.log(`📦 Restaurando ${storedSessions.length} sessões do localStorage`);
+        setSessions(storedSessions);
+      }
+      
+      if (storedCriteria.size > 0) {
+        setInstanceCriteria(storedCriteria);
+      }
+      
+      setHasLoadedFromStorage(true);
+    }
+  }, [user, hasLoadedFromStorage]);
+
+  // Persistir sessões no localStorage quando mudarem (com debounce)
+  useEffect(() => {
+    // Só salvar após o carregamento inicial ter sido feito
+    if (!hasLoadedFromStorage) return;
+    
+    const timeoutId = setTimeout(() => {
+      saveSessionsToStorage(sessions);
+    }, 1000); // Debounce de 1 segundo para evitar escritas excessivas
+    
+    return () => clearTimeout(timeoutId);
+  }, [sessions, hasLoadedFromStorage]);
+
+  // Persistir critérios no localStorage quando mudarem
+  useEffect(() => {
+    if (!hasLoadedFromStorage) return;
+    saveCriteriaToStorage(instanceCriteria);
+  }, [instanceCriteria, hasLoadedFromStorage]);
 
   // Conectar WebSocket e carregar instâncias ao fazer login
   useEffect(() => {
     if (!user) return;
 
+    console.log('🔄 useEffect de conexões iniciado - user:', user.email);
+
     const initializeConnections = async () => {
       setLoadingConnections(true);
       try {
+        console.log('🔌 Conectando WebSocket...');
         whatsappAPI.connect();
         
         // Tentar restaurar sessão automaticamente
@@ -59,7 +173,8 @@ const App: React.FC = () => {
         }
         
         // Carregar todas as instâncias (incluindo a restaurada)
-        await loadInstances();
+        const instances = await loadInstances();
+        console.log('📱 Instâncias carregadas:', instances.length);
       } catch (error) {
         console.error('Erro ao inicializar conexões:', error);
       } finally {
@@ -70,6 +185,7 @@ const App: React.FC = () => {
     initializeConnections();
 
     const handleMessage = (data: { instanceId: string; message: any }) => {
+      console.log('📨 App.tsx recebeu mensagem:', data);
       const { instanceId, message } = data;
       const contactName = message.contactName || message.from.split('@')[0];
       const isFromMe = message.isFromMe || false;
@@ -78,6 +194,7 @@ const App: React.FC = () => {
       const sessionId = `${instanceId}-${clientJid}`;
       const messageTimestamp = message.timestamp; // timestamp em milissegundos
       const isHistorical = message.isHistorical || false;
+      console.log(`📨 Processando mensagem para sessão ${sessionId}:`, message.body?.substring(0, 50));
       
       setSessions(prev => {
         let session = prev.find(s => s.id === sessionId);
@@ -235,6 +352,14 @@ const App: React.FC = () => {
   };
 
   const handleLogout = async () => {
+    // Limpar dados locais ao fazer logout (segurança entre usuários)
+    localStorage.removeItem(STORAGE_KEY_SESSIONS);
+    localStorage.removeItem(STORAGE_KEY_CRITERIA);
+    setSessions([]);
+    setInstanceCriteria(new Map());
+    setConnections([]);
+    setIsConnected(false);
+    setHasLoadedFromStorage(false);
     await signOut();
   };
 
