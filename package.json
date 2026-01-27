@@ -9,9 +9,10 @@
     "preview": "vite preview"
   },
   "dependencies": {
-    "react-dom": "^19.2.3",
     "@google/genai": "^1.38.0",
+    "@supabase/supabase-js": "^2.93.1",
     "react": "^19.2.3",
+    "react-dom": "^19.2.3",
     "socket.io-client": "^4.8.1"
   },
   "devDependencies": {

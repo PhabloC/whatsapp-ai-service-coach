@@ -1,27 +1,7 @@
 import React, { useMemo } from 'react';
-import { ChatSession, HeatmapAnalysis, ConnectionInstance } from '../../types';
-
-interface DashboardProps {
-  sessions: ChatSession[];
-  connections: ConnectionInstance[];
-}
-
-interface SourceStats {
-  sourceId: string;
-  sourceName: string;
-  totalSessions: number;
-  totalAnalyses: number;
-  averageScore: number;
-  heatmaps: HeatmapAnalysis[];
-  averageHeatmap: {
-    estrutura: number;
-    spiced: number;
-    solucao: number;
-    objeções: number;
-    rapport: number;
-    nota_final: number;
-  };
-}
+import { ChatSession } from '@/types';
+import { DashboardProps, SourceStats } from './types';
+import { ConnectionInstance } from '../sidebar/types';
 
 const PILARES = [
   { key: 'estrutura', label: 'ESTRUTURA', emoji: '📋' },

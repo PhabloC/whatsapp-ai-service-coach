@@ -1,11 +1,8 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { CriteriaConfig } from '../../types';
+import { CriteriaConfigProps } from './types';
 
-interface CriteriaConfigProps {
-  criteria: CriteriaConfig;
-  onSave: (criteria: CriteriaConfig) => void;
-  onCancel: () => void;
-}
+
 
 const DEFAULT_CRITERIA: CriteriaConfig = {
   estrutura: 'Abertura adequada, apresentação profissional, identificação de necessidade, fechamento claro.',
@@ -17,6 +14,17 @@ const DEFAULT_CRITERIA: CriteriaConfig = {
 
 export const CriteriaConfigComponent: React.FC<CriteriaConfigProps> = ({ criteria, onSave, onCancel }) => {
   const [formData, setFormData] = useState<CriteriaConfig>(criteria || DEFAULT_CRITERIA);
+
+  // Bloquear scroll e interação do body quando o modal está aberto
+  useEffect(() => {
+    document.body.style.overflow = 'hidden';
+    document.body.style.pointerEvents = 'none';
+    
+    return () => {
+      document.body.style.overflow = '';
+      document.body.style.pointerEvents = '';
+    };
+  }, []);
 
   const handleChange = (field: keyof CriteriaConfig, value: string) => {
     setFormData(prev => ({ ...prev, [field]: value }));
@@ -31,8 +39,15 @@ export const CriteriaConfigComponent: React.FC<CriteriaConfigProps> = ({ criteri
   };
 
   return (
-    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-      <div className="bg-white rounded-3xl shadow-2xl max-w-4xl w-full max-h-[90vh] overflow-hidden flex flex-col">
+    <div 
+      className="fixed inset-0 bg-black/50 flex items-center justify-center z-[100] p-4"
+      style={{ pointerEvents: 'auto' }}
+      onClick={onCancel}
+    >
+      <div 
+        className="bg-white rounded-3xl shadow-2xl max-w-4xl w-full max-h-[90vh] overflow-hidden flex flex-col"
+        onClick={(e) => e.stopPropagation()}
+      >
         {/* Header */}
         <div className="p-6 border-b border-slate-200">
           <div className="flex items-center justify-between">

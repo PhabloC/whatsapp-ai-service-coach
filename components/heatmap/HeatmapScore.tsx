@@ -1,9 +1,8 @@
 import React from 'react';
 import { HeatmapAnalysis } from '../../types';
+import { HeatmapScoreProps } from './types';
 
-interface HeatmapScoreProps {
-  analysis: HeatmapAnalysis;
-}
+
 
 const PILARES = [
   { key: 'estrutura', label: 'ESTRUTURA', emoji: '📋' },

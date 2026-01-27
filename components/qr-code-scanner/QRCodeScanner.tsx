@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { StageInfo, QRCodeScannerProps } from './types';
 import { whatsappAPI } from '../../src/services/whatsapp-api';
 
@@ -16,47 +16,114 @@ export const QRCodeScanner: React.FC<QRCodeScannerProps> = ({ onConnect, onCance
   const [countdown, setCountdown] = useState(120);
   const [instanceId, setInstanceId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  
+  // Ref para manter o instanceId atualizado nos callbacks (evita stale closure)
+  const instanceIdRef = useRef<string | null>(null);
+  
+  // Ref para callbacks (evita re-execução do useEffect quando props mudam)
+  const onConnectRef = useRef(onConnect);
+  onConnectRef.current = onConnect;
+  
+  // Ref para controlar se já criou instância (evita criar múltiplas)
+  const instanceCreatedRef = useRef(false);
 
   useEffect(() => {
+    // CORREÇÃO: Evitar criar múltiplas instâncias
+    if (instanceCreatedRef.current) {
+      // #region agent log
+      fetch('http://127.0.0.1:7244/ingest/4c588078-cb72-4b05-91b7-3d96536f9ac0',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'QRCodeScanner.tsx:30',message:'MAIN useEffect SKIPPED - instance already created',data:{instanceId:instanceIdRef.current},timestamp:Date.now(),sessionId:'debug-session',runId:'post-fix3',hypothesisId:'H'})}).catch(()=>{});
+      // #endregion
+      return;
+    }
+    
+    // #region agent log
+    fetch('http://127.0.0.1:7244/ingest/4c588078-cb72-4b05-91b7-3d96536f9ac0',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'QRCodeScanner.tsx:38',message:'MAIN useEffect ENTRY - first time',data:{},timestamp:Date.now(),sessionId:'debug-session',runId:'post-fix3',hypothesisId:'H'})}).catch(()=>{});
+    // #endregion
+    
     // Conectar WebSocket
     whatsappAPI.connect();
 
-    // Listener para QR Code (com verificação mais flexível)
+    // Listener para QR Code - SOMENTE aceita QR da instância atual
+    // Usa ref para ter acesso ao valor mais recente do instanceId
     const handleQR = (data: { instanceId: string; qrCode: string }) => {
-      console.log('QR Code recebido via WebSocket:', data.instanceId);
-      // Aceitar QR mesmo se instanceId ainda não estiver definido (pode chegar antes)
-      if (!instanceId || data.instanceId === instanceId) {
-        setQrCode(data.qrCode);
-        setStage('scanning');
-        setCountdown(120);
-        if (!instanceId && data.instanceId) {
-          setInstanceId(data.instanceId);
-        }
+      // #region agent log
+      fetch('http://127.0.0.1:7244/ingest/4c588078-cb72-4b05-91b7-3d96536f9ac0',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'QRCodeScanner.tsx:30',message:'handleQR CALLED via WebSocket',data:{dataInstanceId:data.instanceId,currentInstanceId:instanceIdRef.current},timestamp:Date.now(),sessionId:'debug-session',runId:'post-fix',hypothesisId:'B'})}).catch(()=>{});
+      // #endregion
+      
+      // CORREÇÃO: Usar ref para comparação e IGNORAR QR de outras instâncias
+      const currentId = instanceIdRef.current;
+      if (!currentId || data.instanceId !== currentId) {
+        // #region agent log
+        fetch('http://127.0.0.1:7244/ingest/4c588078-cb72-4b05-91b7-3d96536f9ac0',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'QRCodeScanner.tsx:38',message:'handleQR IGNORED - different instance',data:{dataInstanceId:data.instanceId,currentInstanceId:currentId},timestamp:Date.now(),sessionId:'debug-session',runId:'post-fix',hypothesisId:'B'})}).catch(()=>{});
+        // #endregion
+        return; // Ignorar QR de outras instâncias
       }
+      
+      // CORREÇÃO: Só atualizar QR se não tiver um válido (countdown > 0)
+      // Usar uma variável para rastrear se devemos aceitar o novo QR
+      let shouldAcceptNewQR = false;
+      
+      setCountdown(prevCountdown => {
+        setQrCode(prevQrCode => {
+          // Se já tem QR e countdown > 0, não atualizar
+          if (prevQrCode && prevCountdown > 0) {
+            // #region agent log
+            fetch('http://127.0.0.1:7244/ingest/4c588078-cb72-4b05-91b7-3d96536f9ac0',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'QRCodeScanner.tsx:52',message:'handleQR SKIPPED - QR still valid',data:{countdown:prevCountdown,hasQR:!!prevQrCode},timestamp:Date.now(),sessionId:'debug-session',runId:'post-fix',hypothesisId:'B'})}).catch(()=>{});
+            // #endregion
+            return prevQrCode; // Manter QR atual
+          }
+          // QR expirado ou não existe, aceitar novo
+          // #region agent log
+          fetch('http://127.0.0.1:7244/ingest/4c588078-cb72-4b05-91b7-3d96536f9ac0',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'QRCodeScanner.tsx:60',message:'handleQR ACCEPTING NEW QR',data:{prevCountdown,hadPrevQR:!!prevQrCode},timestamp:Date.now(),sessionId:'debug-session',runId:'post-fix',hypothesisId:'B'})}).catch(()=>{});
+          // #endregion
+          shouldAcceptNewQR = true;
+          return data.qrCode;
+        });
+        
+        // Se aceitou novo QR, resetar countdown; senão manter
+        if (shouldAcceptNewQR) {
+          return 120;
+        }
+        return prevCountdown;
+      });
+      
+      setStage('scanning');
+      console.log('QR Code processado via WebSocket:', data.instanceId);
     };
 
-    // Listener para conexão estabelecida (mais flexível)
+    // Listener para conexão estabelecida - usa ref para evitar stale closure
     const handleConnected = (data: { instanceId: string; phoneNumber?: string }) => {
-      console.log('Conexão detectada via WebSocket:', data.instanceId, 'Current:', instanceId);
-      // Aceitar conexão mesmo se instanceId ainda não estiver definido
-      if (!instanceId || data.instanceId === instanceId) {
-        console.log('Atualizando para conectado!');
-        setStage('connected');
-        if (!instanceId && data.instanceId) {
-          setInstanceId(data.instanceId);
-        }
-        setTimeout(() => {
-          onConnect(data.instanceId);
-        }, 1000);
+      const currentId = instanceIdRef.current;
+      // #region agent log
+      fetch('http://127.0.0.1:7244/ingest/4c588078-cb72-4b05-91b7-3d96536f9ac0',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'QRCodeScanner.tsx:78',message:'handleConnected CALLED',data:{dataInstanceId:data.instanceId,currentInstanceId:currentId},timestamp:Date.now(),sessionId:'debug-session',runId:'post-fix2',hypothesisId:'F'})}).catch(()=>{});
+      // #endregion
+      
+      // CORREÇÃO: Usar ref para comparação (evita stale closure)
+      if (!currentId || data.instanceId !== currentId) {
+        // #region agent log
+        fetch('http://127.0.0.1:7244/ingest/4c588078-cb72-4b05-91b7-3d96536f9ac0',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'QRCodeScanner.tsx:85',message:'handleConnected IGNORED - different instance',data:{dataInstanceId:data.instanceId,currentInstanceId:currentId},timestamp:Date.now(),sessionId:'debug-session',runId:'post-fix2',hypothesisId:'F'})}).catch(()=>{});
+        // #endregion
+        return;
       }
+      
+      // #region agent log
+      fetch('http://127.0.0.1:7244/ingest/4c588078-cb72-4b05-91b7-3d96536f9ac0',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'QRCodeScanner.tsx:105',message:'handleConnected ACCEPTED - calling onConnect',data:{instanceId:data.instanceId},timestamp:Date.now(),sessionId:'debug-session',runId:'post-fix3',hypothesisId:'F'})}).catch(()=>{});
+      // #endregion
+      console.log('Conexão detectada via WebSocket:', data.instanceId);
+      setStage('connected');
+      setTimeout(() => {
+        onConnectRef.current(data.instanceId); // Usar ref para evitar stale closure
+      }, 1000);
     };
 
-    // Listener para desconexão
+    // Listener para desconexão - usa ref para evitar stale closure
     const handleDisconnected = (data: { instanceId: string }) => {
-      if (!instanceId || data.instanceId === instanceId) {
-        setStage('idle');
-        setQrCode('');
+      const currentId = instanceIdRef.current;
+      if (!currentId || data.instanceId !== currentId) {
+        return;
       }
+      setStage('idle');
+      setQrCode('');
     };
 
     whatsappAPI.on('qr', handleQR);
@@ -65,15 +132,34 @@ export const QRCodeScanner: React.FC<QRCodeScannerProps> = ({ onConnect, onCance
 
     // Criar nova instância após configurar listeners
     const createInstance = async () => {
+      // Verificar se já criou instância
+      if (instanceCreatedRef.current) {
+        // #region agent log
+        fetch('http://127.0.0.1:7244/ingest/4c588078-cb72-4b05-91b7-3d96536f9ac0',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'QRCodeScanner.tsx:100',message:'createInstance SKIPPED - already created',data:{instanceId:instanceIdRef.current},timestamp:Date.now(),sessionId:'debug-session',runId:'post-fix3',hypothesisId:'H'})}).catch(()=>{});
+        // #endregion
+        return;
+      }
+      
+      // Marcar como criando (antes de criar para evitar race condition)
+      instanceCreatedRef.current = true;
+      
+      // #region agent log
+      fetch('http://127.0.0.1:7244/ingest/4c588078-cb72-4b05-91b7-3d96536f9ac0',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'QRCodeScanner.tsx:110',message:'createInstance CALLED - first time',data:{},timestamp:Date.now(),sessionId:'debug-session',runId:'post-fix3',hypothesisId:'H'})}).catch(()=>{});
+      // #endregion
       try {
         setError(null);
         setStage('idle');
         console.log('Criando instância WhatsApp...');
         const instance = await whatsappAPI.createInstance(`Instância ${new Date().toLocaleTimeString()}`);
+        // #region agent log
+        fetch('http://127.0.0.1:7244/ingest/4c588078-cb72-4b05-91b7-3d96536f9ac0',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'QRCodeScanner.tsx:120',message:'createInstance SUCCESS',data:{instanceId:instance.id},timestamp:Date.now(),sessionId:'debug-session',runId:'post-fix3',hypothesisId:'H'})}).catch(()=>{});
+        // #endregion
         console.log('Instância criada:', instance.id);
+        instanceIdRef.current = instance.id; // Atualizar ref imediatamente
         setInstanceId(instance.id);
         setStage('scanning');
       } catch (err: any) {
+        instanceCreatedRef.current = false; // Permitir retry em caso de erro
         setError(err.message || 'Erro ao criar instância');
         console.error('Erro ao criar instância:', err);
         setStage('idle');
@@ -91,83 +177,102 @@ export const QRCodeScanner: React.FC<QRCodeScannerProps> = ({ onConnect, onCance
       whatsappAPI.off('instance_connected', handleConnected);
       whatsappAPI.off('instance_disconnected', handleDisconnected);
     };
-  }, [onConnect]); // Remover instanceId da dependência para evitar re-criação
+  }, []); // Array vazio - executar apenas uma vez na montagem
 
   // Countdown do QR Code
   useEffect(() => {
+    // #region agent log
+    fetch('http://127.0.0.1:7244/ingest/4c588078-cb72-4b05-91b7-3d96536f9ac0',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'QRCodeScanner.tsx:184',message:'COUNTDOWN useEffect',data:{countdown,stage,hasQrCode:!!qrCode},timestamp:Date.now(),sessionId:'debug-session',runId:'post-fix4',hypothesisId:'I'})}).catch(()=>{});
+    // #endregion
+    
     if (stage === 'scanning' && countdown > 0 && qrCode) {
       const timer = setTimeout(() => setCountdown(c => c - 1), 1000);
       return () => clearTimeout(timer);
     }
-    if (countdown === 0 && qrCode) {
-      // QR Code expirado, aguardar novo
+    
+    // CORREÇÃO: Verificar countdown === 0 independente do qrCode
+    if (countdown === 0 && stage === 'scanning') {
+      // #region agent log
+      fetch('http://127.0.0.1:7244/ingest/4c588078-cb72-4b05-91b7-3d96536f9ac0',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'QRCodeScanner.tsx:196',message:'COUNTDOWN ZERO - requesting new QR',data:{instanceId:instanceIdRef.current,hasQrCode:!!qrCode},timestamp:Date.now(),sessionId:'debug-session',runId:'post-fix4',hypothesisId:'I'})}).catch(()=>{});
+      // #endregion
+      // QR Code expirado, limpar e buscar novo
       setQrCode('');
-      setCountdown(120);
+      
+      // Forçar busca de novo QR Code imediatamente
+      const currentId = instanceIdRef.current;
+      if (currentId) {
+        whatsappAPI.getQRCode(currentId).then(qrData => {
+          // #region agent log
+          fetch('http://127.0.0.1:7244/ingest/4c588078-cb72-4b05-91b7-3d96536f9ac0',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'QRCodeScanner.tsx:208',message:'COUNTDOWN ZERO - fetched new QR',data:{hasQR:qrData.hasQR,status:qrData.status},timestamp:Date.now(),sessionId:'debug-session',runId:'post-fix4',hypothesisId:'I'})}).catch(()=>{});
+          // #endregion
+          if (qrData.hasQR && qrData.qrCode) {
+            setQrCode(qrData.qrCode);
+            setCountdown(120); // Resetar countdown com novo QR
+          } else {
+            // Se não tem QR disponível, resetar countdown para tentar novamente
+            setCountdown(120);
+          }
+        }).catch(err => {
+          console.error('Erro ao buscar novo QR Code:', err);
+          setCountdown(120); // Resetar countdown mesmo em erro
+        });
+      } else {
+        setCountdown(120);
+      }
     }
   }, [countdown, stage, qrCode]);
 
-  // Buscar status periodicamente (QR Code e conexão) se não recebeu via WebSocket
+  // Buscar status periodicamente APENAS para verificar conexão (não para QR Code)
+  // O QR Code é recebido via WebSocket, polling serve apenas como fallback para conexão
   useEffect(() => {
     // #region agent log
-    fetch('http://127.0.0.1:7245/ingest/66e591df-86df-42d1-99fb-24432197f6e0',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'QRCodeScanner.tsx:110',message:'polling useEffect ENTRY',data:{instanceId,hasInstanceId:!!instanceId},timestamp:Date.now(),sessionId:'debug-session',runId:'post-fix',hypothesisId:'D'})}).catch(()=>{});
+    fetch('http://127.0.0.1:7244/ingest/4c588078-cb72-4b05-91b7-3d96536f9ac0',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'QRCodeScanner.tsx:130',message:'POLLING useEffect ENTRY',data:{instanceId,hasQrCode:!!qrCode},timestamp:Date.now(),sessionId:'debug-session',runId:'post-fix',hypothesisId:'A'})}).catch(()=>{});
     // #endregion
     if (!instanceId) return;
-
-    let attempts = 0;
-    const maxAttempts = 120; // 60 segundos (500ms * 120)
+    
+    // CORREÇÃO: Se já tem QR Code, não precisa de polling agressivo
+    // Apenas verificar conexão a cada 5 segundos
     let intervalId: NodeJS.Timeout | null = null;
-    let isCleanedUp = false; // Flag para evitar execução após cleanup
+    let isCleanedUp = false;
 
-    const checkStatus = async () => {
-      // Verificar se foi limpo antes de executar
-      if (isCleanedUp) {
-        // #region agent log
-        fetch('http://127.0.0.1:7245/ingest/66e591df-86df-42d1-99fb-24432197f6e0',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'QRCodeScanner.tsx:122',message:'checkStatus SKIPPED - cleaned up',data:{},timestamp:Date.now(),sessionId:'debug-session',runId:'post-fix',hypothesisId:'D'})}).catch(()=>{});
-        // #endregion
-        return true; // Parar execução
-      }
-
+    const checkConnectionStatus = async () => {
+      if (isCleanedUp) return true;
+      
       try {
-        attempts++;
-        
-        // Usar endpoint otimizado de QR Code primeiro
         const qrData = await whatsappAPI.getQRCode(instanceId);
+        
+        // #region agent log
+        fetch('http://127.0.0.1:7244/ingest/4c588078-cb72-4b05-91b7-3d96536f9ac0',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'QRCodeScanner.tsx:147',message:'checkConnectionStatus - checking',data:{status:qrData.status},timestamp:Date.now(),sessionId:'debug-session',runId:'post-fix',hypothesisId:'A'})}).catch(()=>{});
+        // #endregion
         
         // Verificar se conectou
         if (qrData.status === 'connected') {
+          // #region agent log
+          fetch('http://127.0.0.1:7244/ingest/4c588078-cb72-4b05-91b7-3d96536f9ac0',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'QRCodeScanner.tsx:182',message:'POLLING detected CONNECTED - calling onConnect',data:{instanceId},timestamp:Date.now(),sessionId:'debug-session',runId:'post-fix2',hypothesisId:'F'})}).catch(()=>{});
+          // #endregion
           console.log('✅ Conexão detectada via polling!');
           setStage('connected');
-          setQrCode(''); // Limpar QR Code
+          setQrCode('');
           if (intervalId) {
             clearInterval(intervalId);
             intervalId = null;
           }
           setTimeout(() => {
             if (!isCleanedUp) {
-              onConnect(instanceId);
+              onConnectRef.current(instanceId); // Usar ref para evitar stale closure
             }
           }, 1000);
-          return true; // Conectado, parar polling
+          return true;
         }
         
-        // Verificar se tem QR Code (usar estado atual via closure, mas verificar se não foi limpo)
-        if (qrData.hasQR && qrData.qrCode) {
-          // Usar setQrCode com callback para evitar stale closure
-          setQrCode(prevQrCode => {
-            if (!prevQrCode && !isCleanedUp) {
-              console.log('📱 QR Code encontrado via polling!');
-              setStage('scanning');
-              setCountdown(120);
-            }
-            return prevQrCode || qrData.qrCode || '';
-          });
-        }
-        
-        // Se já tentou muitas vezes, reduzir frequência mas continuar
-        if (attempts >= maxAttempts && intervalId && !isCleanedUp) {
-          clearInterval(intervalId);
-          // Continuar com polling mais lento
-          intervalId = setInterval(checkStatus, 2000);
+        // CORREÇÃO: Só buscar QR se não tiver nenhum ainda (usar ref)
+        if (!qrCode && qrData.hasQR && qrData.qrCode) {
+          // #region agent log
+          fetch('http://127.0.0.1:7244/ingest/4c588078-cb72-4b05-91b7-3d96536f9ac0',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'QRCodeScanner.tsx:170',message:'POLLING found QR - setting initial',data:{},timestamp:Date.now(),sessionId:'debug-session',runId:'post-fix',hypothesisId:'A'})}).catch(()=>{});
+          // #endregion
+          setQrCode(qrData.qrCode);
+          setStage('scanning');
+          setCountdown(120);
         }
         
         return false;
@@ -177,29 +282,34 @@ export const QRCodeScanner: React.FC<QRCodeScannerProps> = ({ onConnect, onCance
       }
     };
 
-    // Polling agressivo inicial (500ms) para detectar mudanças rapidamente
+    // CORREÇÃO: Polling muito mais lento (5 segundos) apenas para verificar conexão
+    // O QR Code é atualizado via WebSocket
     intervalId = setInterval(async () => {
-      const shouldStop = await checkStatus();
+      const shouldStop = await checkConnectionStatus();
       if (shouldStop && intervalId) {
         clearInterval(intervalId);
         intervalId = null;
       }
-    }, 500);
+    }, 5000);
+    
+    // Fazer uma verificação inicial após 1 segundo
+    const initialCheck = setTimeout(() => {
+      checkConnectionStatus();
+    }, 1000);
 
     // #region agent log
-    fetch('http://127.0.0.1:7245/ingest/66e591df-86df-42d1-99fb-24432197f6e0',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'QRCodeScanner.tsx:175',message:'polling useEffect SETUP COMPLETE',data:{intervalIdSet:!!intervalId},timestamp:Date.now(),sessionId:'debug-session',runId:'post-fix',hypothesisId:'D'})}).catch(()=>{});
+    fetch('http://127.0.0.1:7244/ingest/4c588078-cb72-4b05-91b7-3d96536f9ac0',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'QRCodeScanner.tsx:200',message:'POLLING useEffect SETUP - interval 5000ms',data:{},timestamp:Date.now(),sessionId:'debug-session',runId:'post-fix',hypothesisId:'A'})}).catch(()=>{});
     // #endregion
+    
     return () => {
-      // #region agent log
-      fetch('http://127.0.0.1:7245/ingest/66e591df-86df-42d1-99fb-24432197f6e0',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'QRCodeScanner.tsx:178',message:'polling useEffect CLEANUP',data:{intervalIdExists:!!intervalId},timestamp:Date.now(),sessionId:'debug-session',runId:'post-fix',hypothesisId:'D'})}).catch(()=>{});
-      // #endregion
-      isCleanedUp = true; // Marcar como limpo
+      isCleanedUp = true;
+      clearTimeout(initialCheck);
       if (intervalId) {
         clearInterval(intervalId);
         intervalId = null;
       }
     };
-  }, [instanceId, onConnect]);
+  }, [instanceId, qrCode]); // Removido onConnect - usamos ref
 
   const stageInfo = STAGE_INFO[stage];
 

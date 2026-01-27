@@ -1,11 +1,7 @@
 import React, { useState, useRef, useEffect } from 'react';
+import { SidebarResizerProps } from './types';
 
-interface SidebarResizerProps {
-  onResize: (width: number) => void;
-  currentWidth: number;
-  minWidth?: number;
-  maxWidth?: number;
-}
+
 
 export const SidebarResizer: React.FC<SidebarResizerProps> = ({
   onResize,
