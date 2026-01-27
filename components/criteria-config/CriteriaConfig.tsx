@@ -1,8 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { CriteriaConfig } from '../../types';
 import { CriteriaConfigProps } from './types';
-
-
+import { promptService } from '../../src/services/prompt-service';
+import { generateCustomPrompt } from '../../geminiService';
 
 const DEFAULT_CRITERIA: CriteriaConfig = {
   estrutura: 'Abertura adequada, apresentação profissional, identificação de necessidade, fechamento claro.',
@@ -12,8 +12,13 @@ const DEFAULT_CRITERIA: CriteriaConfig = {
   rapport: 'Conexão empática, comunicação clara, engajamento mantido, tom profissional e amigável.'
 };
 
-export const CriteriaConfigComponent: React.FC<CriteriaConfigProps> = ({ criteria, onSave, onCancel }) => {
+export const CriteriaConfigComponent: React.FC<CriteriaConfigProps> = ({ criteria, userId, onSave, onCancel }) => {
   const [formData, setFormData] = useState<CriteriaConfig>(criteria || DEFAULT_CRITERIA);
+  const [isSaving, setIsSaving] = useState(false);
+  const [isGeneratingPrompt, setIsGeneratingPrompt] = useState(false);
+  const [generatedPrompt, setGeneratedPrompt] = useState<string | null>(null);
+  const [showPromptPreview, setShowPromptPreview] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
 
   // Bloquear scroll e interação do body quando o modal está aberto
   useEffect(() => {
@@ -28,14 +33,65 @@ export const CriteriaConfigComponent: React.FC<CriteriaConfigProps> = ({ criteri
 
   const handleChange = (field: keyof CriteriaConfig, value: string) => {
     setFormData(prev => ({ ...prev, [field]: value }));
+    // Limpar prompt gerado quando critérios mudam
+    setGeneratedPrompt(null);
+    setShowPromptPreview(false);
   };
 
-  const handleSave = () => {
-    onSave(formData);
+  const handleGeneratePrompt = async () => {
+    setIsGeneratingPrompt(true);
+    setSaveError(null);
+    
+    try {
+      const result = await generateCustomPrompt(formData);
+      setGeneratedPrompt(result.prompt);
+      setShowPromptPreview(true);
+    } catch (error) {
+      console.error('Erro ao gerar prompt:', error);
+      setSaveError('Erro ao gerar prompt. Verifique a configuração da API.');
+    } finally {
+      setIsGeneratingPrompt(false);
+    }
+  };
+
+  const handleSave = async () => {
+    setIsSaving(true);
+    setSaveError(null);
+
+    try {
+      // Se não tem prompt gerado ainda, gerar antes de salvar
+      let promptToSave = generatedPrompt;
+      
+      if (!promptToSave) {
+        setIsGeneratingPrompt(true);
+        const result = await generateCustomPrompt(formData);
+        promptToSave = result.prompt;
+        setGeneratedPrompt(promptToSave);
+        setIsGeneratingPrompt(false);
+      }
+
+      // Salvar no Supabase se tiver userId
+      if (userId) {
+        const response = await promptService.saveCriteria(userId, formData, promptToSave);
+        
+        if (response.error) {
+          throw new Error(response.error.message);
+        }
+      }
+
+      // Chamar callback do pai com o prompt gerado
+      onSave(formData, promptToSave || undefined);
+    } catch (error) {
+      console.error('Erro ao salvar:', error);
+      setSaveError(error instanceof Error ? error.message : 'Erro ao salvar critérios');
+      setIsSaving(false);
+    }
   };
 
   const handleReset = () => {
     setFormData(DEFAULT_CRITERIA);
+    setGeneratedPrompt(null);
+    setShowPromptPreview(false);
   };
 
   return (
@@ -132,29 +188,116 @@ export const CriteriaConfigComponent: React.FC<CriteriaConfigProps> = ({ criteri
               className="w-full p-4 border border-slate-200 rounded-xl focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 outline-none resize-none min-h-[100px] text-sm"
             />
           </div>
+
+          {/* Seção de Preview do Prompt Gerado */}
+          {showPromptPreview && generatedPrompt && (
+            <div className="mt-6 p-4 bg-gradient-to-br from-slate-50 to-slate-100 rounded-xl border-2 border-emerald-200">
+              <div className="flex items-center justify-between mb-3">
+                <h4 className="text-sm font-black text-slate-700 uppercase tracking-wider flex items-center gap-2">
+                  <svg className="w-5 h-5 text-emerald-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+                  </svg>
+                  Prompt Gerado pela IA
+                </h4>
+                <button
+                  onClick={() => setShowPromptPreview(false)}
+                  className="text-slate-400 hover:text-slate-600"
+                >
+                  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12" />
+                  </svg>
+                </button>
+              </div>
+              <div className="bg-white rounded-lg p-4 border border-slate-200 max-h-48 overflow-y-auto">
+                <p className="text-sm text-slate-600 whitespace-pre-wrap">{generatedPrompt}</p>
+              </div>
+              <p className="mt-2 text-xs text-slate-500">
+                Este prompt será usado automaticamente para avaliar as conversas.
+              </p>
+            </div>
+          )}
+
+          {/* Mensagem de Erro */}
+          {saveError && (
+            <div className="mt-4 p-4 bg-red-50 border border-red-200 rounded-xl">
+              <p className="text-sm text-red-600 flex items-center gap-2">
+                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                </svg>
+                {saveError}
+              </p>
+            </div>
+          )}
         </div>
 
         {/* Footer */}
-        <div className="p-6 border-t border-slate-200 flex gap-3">
-          <button
-            onClick={handleReset}
-            className="px-6 py-3 border border-slate-300 text-slate-700 font-bold rounded-xl hover:bg-slate-50 transition-colors"
-          >
-            Restaurar Padrão
-          </button>
-          <div className="flex-1" />
-          <button
-            onClick={onCancel}
-            className="px-6 py-3 border border-slate-300 text-slate-400 font-bold rounded-xl hover:bg-slate-50 transition-colors"
-          >
-            Cancelar
-          </button>
-          <button
-            onClick={handleSave}
-            className="px-6 py-3 bg-emerald-500 text-white font-black rounded-xl hover:bg-emerald-600 shadow-lg shadow-emerald-500/20 transition-all active:scale-[0.98]"
-          >
-            SALVAR CRITÉRIOS
-          </button>
+        <div className="p-6 border-t border-slate-200">
+          <div className="flex gap-3">
+            <button
+              onClick={handleReset}
+              disabled={isSaving || isGeneratingPrompt}
+              className="px-6 py-3 border border-slate-300 text-slate-700 font-bold rounded-xl hover:bg-slate-50 transition-colors disabled:opacity-50"
+            >
+              Restaurar Padrão
+            </button>
+            
+            <button
+              onClick={handleGeneratePrompt}
+              disabled={isSaving || isGeneratingPrompt}
+              className="px-6 py-3 border-2 border-emerald-500 text-emerald-600 font-bold rounded-xl hover:bg-emerald-50 transition-colors disabled:opacity-50 flex items-center gap-2"
+            >
+              {isGeneratingPrompt ? (
+                <>
+                  <svg className="animate-spin w-5 h-5" fill="none" viewBox="0 0 24 24">
+                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                  </svg>
+                  Gerando...
+                </>
+              ) : (
+                <>
+                  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M13 10V3L4 14h7v7l9-11h-7z" />
+                  </svg>
+                  Gerar Prompt
+                </>
+              )}
+            </button>
+            
+            <div className="flex-1" />
+            
+            <button
+              onClick={onCancel}
+              disabled={isSaving || isGeneratingPrompt}
+              className="px-6 py-3 border border-slate-300 text-slate-400 font-bold rounded-xl hover:bg-slate-50 transition-colors disabled:opacity-50"
+            >
+              Cancelar
+            </button>
+            
+            <button
+              onClick={handleSave}
+              disabled={isSaving || isGeneratingPrompt}
+              className="px-6 py-3 bg-emerald-500 text-white font-black rounded-xl hover:bg-emerald-600 shadow-lg shadow-emerald-500/20 transition-all active:scale-[0.98] disabled:opacity-50 flex items-center gap-2"
+            >
+              {isSaving ? (
+                <>
+                  <svg className="animate-spin w-5 h-5" fill="none" viewBox="0 0 24 24">
+                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                  </svg>
+                  Salvando...
+                </>
+              ) : (
+                'SALVAR CRITÉRIOS'
+              )}
+            </button>
+          </div>
+          
+          {!generatedPrompt && (
+            <p className="mt-3 text-xs text-slate-500 text-center">
+              Ao salvar, um prompt personalizado será gerado automaticamente com base nos seus critérios.
+            </p>
+          )}
         </div>
       </div>
     </div>

@@ -5,6 +5,7 @@ export interface Message {
   text: string;
   timestamp: string;
   contactName: string;
+  rawTimestamp?: number; // Timestamp original em milissegundos para ordenação
 }
 
 export interface AnalysisEntry {
@@ -25,11 +26,16 @@ export interface ChatSession {
   contactName: string;
   lastMessage: string;
   timestamp: string;
+  lastMessageTimestamp?: number; // Timestamp em ms para ordenação
   messages: Message[];
   customPrompt?: string;
   analysisHistory: AnalysisEntry[];
   criteriaConfig?: CriteriaConfig;
   heatmapHistory?: HeatmapHistoryEntry[];
+  markedAsSale?: boolean;
+  salesScriptHistory?: SalesScriptHistoryEntry[];
+  profilePicture?: string | null; // URL da foto de perfil do contato
+  contactJid?: string; // JID do contato para buscar foto
 }
 
 export interface AnalysisResult {
@@ -69,4 +75,32 @@ export interface User {
   id: string;
   email: string;
   name: string;
+}
+
+// Script de Vendas gerado por IA
+export interface SalesScript {
+  titulo: string;
+  resumo_conversa: string;
+  gatilhos_identificados: string[];
+  script_recomendado: ScriptStep[];
+  dicas_aplicacao: string[];
+  objecoes_previstas: ObjecaoResposta[];
+}
+
+export interface ScriptStep {
+  etapa: number;
+  titulo: string;
+  fala_sugerida: string;
+  objetivo: string;
+}
+
+export interface ObjecaoResposta {
+  objecao: string;
+  resposta_sugerida: string;
+}
+
+export interface SalesScriptHistoryEntry {
+  id: string;
+  timestamp: string;
+  script: SalesScript;
 }

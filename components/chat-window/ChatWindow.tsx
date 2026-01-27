@@ -1,20 +1,24 @@
-import React, { useState, useEffect } from 'react';
-import { AnalysisEntry, CriteriaConfig, HeatmapAnalysis } from '@/types';
+import React, { useState, useEffect, useRef } from 'react';
+import { AnalysisEntry, CriteriaConfig, HeatmapAnalysis, SalesScript } from '@/types';
 import { ChatWindowProps } from './types';
-import { analyzeConversation, analyzeConversationWithHeatmap } from '@/geminiService';
+import { analyzeConversation, analyzeConversationWithHeatmap, generateSalesScript } from '@/geminiService';
 import { EvolutionHistory } from '@/components/evolution-history/EvolutionHistory';
 import { CriteriaConfigComponent } from '../criteria-config/CriteriaConfig';
 import { HeatmapScore } from '../heatmap/HeatmapScore';
+import { SalesScriptModal } from '../sales-script/SalesScriptModal';
 
 
 
 export const ChatWindow: React.FC<ChatWindowProps> = ({ 
   session, 
+  userId,
   onUpdateSessionPrompt,
   onUpdateSessionCriteria,
   onSaveAnalysis,
   onSaveHeatmap,
   onInjectMessage,
+  onMarkAsSale,
+  onSaveSalesScript,
   instanceCriteria
 }) => {
   const [currentPrompt, setCurrentPrompt] = useState('');
@@ -26,6 +30,12 @@ export const ChatWindow: React.FC<ChatWindowProps> = ({
   const [selectedHeatmapId, setSelectedHeatmapId] = useState<string | null>(null);
   const [showEvolutionHistory, setShowEvolutionHistory] = useState(false);
   const [analysisMode, setAnalysisMode] = useState<'classic' | 'heatmap'>('heatmap');
+  const [showSalesScriptModal, setShowSalesScriptModal] = useState(false);
+  const [isGeneratingScript, setIsGeneratingScript] = useState(false);
+  const [currentSalesScript, setCurrentSalesScript] = useState<SalesScript | null>(null);
+  
+  // Ref para o container de mensagens (auto-scroll)
+  const messagesContainerRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     if (session) {
@@ -34,6 +44,18 @@ export const ChatWindow: React.FC<ChatWindowProps> = ({
       setSelectedHeatmapId(session.heatmapHistory && session.heatmapHistory.length > 0 ? session.heatmapHistory[0].id : null);
     }
   }, [session]);
+
+  // Auto-scroll para o final das mensagens quando a sessão muda ou novas mensagens chegam
+  useEffect(() => {
+    if (messagesContainerRef.current && session?.messages?.length) {
+      // Usar setTimeout para garantir que o DOM foi atualizado
+      setTimeout(() => {
+        if (messagesContainerRef.current) {
+          messagesContainerRef.current.scrollTop = messagesContainerRef.current.scrollHeight;
+        }
+      }, 100);
+    }
+  }, [session?.id, session?.messages?.length]);
 
   const handleAnalyze = async () => {
     if (!session) return;
@@ -116,10 +138,47 @@ export const ChatWindow: React.FC<ChatWindowProps> = ({
     }
   };
 
-  const handleSaveCriteria = (criteria: CriteriaConfig) => {
+  const handleSaveCriteria = (criteria: CriteriaConfig, generatedPrompt?: string) => {
     if (!session) return;
-    onUpdateSessionCriteria(session.id, criteria);
+    onUpdateSessionCriteria(session.id, criteria, generatedPrompt);
     setShowCriteriaConfig(false);
+  };
+
+  const handleMarkAsSale = async () => {
+    if (!session) return;
+    
+    // Marcar a sessão como venda
+    if (onMarkAsSale) {
+      onMarkAsSale(session.id, true);
+    }
+    
+    // Iniciar geração do script
+    setShowSalesScriptModal(true);
+    setIsGeneratingScript(true);
+    setCurrentSalesScript(null);
+    
+    try {
+      const script = await generateSalesScript(session.messages);
+      setCurrentSalesScript(script);
+      
+      // Salvar o script no histórico da sessão
+      if (onSaveSalesScript) {
+        onSaveSalesScript(session.id, script);
+      }
+    } catch (error) {
+      console.error('Erro ao gerar script de vendas:', error);
+      alert('Erro ao gerar script de vendas. Verifique se a chave da API Gemini está configurada.');
+      setShowSalesScriptModal(false);
+    } finally {
+      setIsGeneratingScript(false);
+    }
+  };
+
+  const handleViewSalesScript = () => {
+    if (session?.salesScriptHistory && session.salesScriptHistory.length > 0) {
+      setCurrentSalesScript(session.salesScriptHistory[0].script);
+      setShowSalesScriptModal(true);
+    }
   };
 
   const activeAnalysis = session?.analysisHistory.find(h => h.id === selectedHistoryId)?.result;
@@ -154,16 +213,41 @@ export const ChatWindow: React.FC<ChatWindowProps> = ({
             objeções: '',
             rapport: ''
           }}
+          userId={userId}
           onSave={handleSaveCriteria}
           onCancel={() => setShowCriteriaConfig(false)}
+        />
+      )}
+
+      {/* Sales Script Modal */}
+      {showSalesScriptModal && (
+        <SalesScriptModal
+          script={currentSalesScript}
+          isLoading={isGeneratingScript}
+          onClose={() => setShowSalesScriptModal(false)}
         />
       )}
 
       <div className="flex-1 flex flex-col bg-[#e5ddd5] dark:bg-slate-900 overflow-hidden relative">
         <div className="p-4 bg-white border-b flex items-center justify-between z-10 shadow-sm">
           <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-full bg-emerald-100 text-emerald-600 flex items-center justify-center font-bold">
-              {session.contactName.charAt(0)}
+            <div className="relative w-10 h-10 rounded-full bg-emerald-100 overflow-hidden">
+              {session.profilePicture ? (
+                <img 
+                  src={session.profilePicture} 
+                  alt={session.contactName}
+                  className="absolute inset-0 w-full h-full object-cover"
+                  onError={(e) => {
+                    const target = e.target as HTMLImageElement;
+                    target.style.display = 'none';
+                    const fallback = target.parentElement?.querySelector('.avatar-fallback');
+                    if (fallback) fallback.classList.remove('hidden');
+                  }}
+                />
+              ) : null}
+              <span className={`avatar-fallback absolute inset-0 flex items-center justify-center text-emerald-600 font-bold ${session.profilePicture ? 'hidden' : ''}`}>
+                {session.contactName.charAt(0)}
+              </span>
             </div>
             <div>
               <h3 className="font-semibold text-slate-800">{session.contactName}</h3>
@@ -171,6 +255,28 @@ export const ChatWindow: React.FC<ChatWindowProps> = ({
             </div>
           </div>
           <div className="flex items-center gap-2">
+            {/* Botão de Marcar como Venda / Ver Script */}
+            {session?.markedAsSale ? (
+              <button 
+                onClick={handleViewSalesScript}
+                className="p-2 rounded-full bg-emerald-100 text-emerald-600 transition-colors hover:bg-emerald-200"
+                title="Ver Script de Vendas"
+              >
+                <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+                </svg>
+              </button>
+            ) : (
+              <button 
+                onClick={handleMarkAsSale}
+                className="p-2 rounded-full text-slate-400 hover:bg-emerald-100 hover:text-emerald-600 transition-colors group relative"
+                title="Marcar como Venda Concluída"
+              >
+                <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                </svg>
+              </button>
+            )}
             {/* Botão de Configuração de Critérios */}
             <button 
               onClick={() => setShowCriteriaConfig(true)}
@@ -205,7 +311,7 @@ export const ChatWindow: React.FC<ChatWindowProps> = ({
           </div>
         )}
 
-        <div className="flex-1 overflow-y-auto p-4 space-y-4">
+        <div ref={messagesContainerRef} className="flex-1 overflow-y-auto p-4 space-y-4">
           {session.messages.map((m) => (
             <div key={m.id} className={`flex ${m.sender === 'agent' ? 'justify-end' : 'justify-start'} animate-fade-in`}>
               <div className={`max-w-[70%] p-3 rounded-xl shadow-sm ${m.sender === 'agent' ? 'bg-[#dcf8c6]' : 'bg-white'}`}>

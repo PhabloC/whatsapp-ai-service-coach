@@ -2,6 +2,7 @@ import { CriteriaConfig } from "@/types";
 
 export interface CriteriaConfigProps {
     criteria: CriteriaConfig;
-    onSave: (criteria: CriteriaConfig) => void;
+    userId?: string;
+    onSave: (criteria: CriteriaConfig, generatedPrompt?: string) => void;
     onCancel: () => void;
   }

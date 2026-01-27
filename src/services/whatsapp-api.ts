@@ -28,13 +28,7 @@ export class WhatsAppAPI {
   private listeners: Map<string, Set<Function>> = new Map();
 
   connect() {
-    // #region agent log
-    fetch('http://127.0.0.1:7244/ingest/4c588078-cb72-4b05-91b7-3d96536f9ac0',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'whatsapp-api.ts:30',message:'connect() ENTRY',data:{socketExists:!!this.socket,socketConnected:this.socket?.connected},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'E'})}).catch(()=>{});
-    // #endregion
     if (this.socket?.connected) {
-      // #region agent log
-      fetch('http://127.0.0.1:7244/ingest/4c588078-cb72-4b05-91b7-3d96536f9ac0',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'whatsapp-api.ts:34',message:'connect() EARLY RETURN - already connected',data:{},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'E'})}).catch(()=>{});
-      // #endregion
       return;
     }
 
@@ -167,6 +161,119 @@ export class WhatsAppAPI {
 
     if (!response.ok) {
       throw new Error('Erro ao enviar mensagem');
+    }
+  }
+
+  /**
+   * Lista todas as sessões salvas no servidor (mesmo que não estejam na memória)
+   */
+  async getSavedSessions(): Promise<string[]> {
+    const response = await fetch(`${API_BASE_URL}/api/sessions/saved`);
+    if (!response.ok) {
+      throw new Error('Erro ao buscar sessões salvas');
+    }
+    const data = await response.json();
+    return data.sessions || [];
+  }
+
+  /**
+   * Restaura uma sessão salva no servidor
+   * Útil quando a página é recarregada e a instância já estava autenticada
+   */
+  async restoreSession(instanceId: string): Promise<WhatsAppInstance> {
+    const response = await fetch(`${API_BASE_URL}/api/sessions/${instanceId}/restore`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+    });
+
+    if (!response.ok) {
+      throw new Error('Erro ao restaurar sessão');
+    }
+
+    return response.json();
+  }
+
+  /**
+   * Tenta restaurar automaticamente a primeira sessão disponível
+   * Retorna a instância restaurada ou null se não houver sessões
+   */
+  async autoRestoreSession(): Promise<WhatsAppInstance | null> {
+    try {
+      // Primeiro, verificar instâncias já em memória no servidor
+      const instances = await this.getInstances();
+      if (instances.length > 0) {
+        // Já existe uma instância carregada, usar ela
+        const connectedInstance = instances.find(i => i.status === 'connected');
+        if (connectedInstance) {
+          return connectedInstance;
+        }
+        // Se tem instância mas não está conectada, retornar a primeira
+        return instances[0];
+      }
+
+      // Se não tem instâncias em memória, verificar sessões salvas
+      const savedSessions = await this.getSavedSessions();
+      if (savedSessions.length > 0) {
+        // Restaurar a primeira sessão salva
+        return await this.restoreSession(savedSessions[0]);
+      }
+
+      return null;
+    } catch (error) {
+      console.error('Erro ao auto-restaurar sessão:', error);
+      return null;
+    }
+  }
+
+  /**
+   * Busca a foto de perfil de um contato
+   * @param instanceId ID da instância WhatsApp
+   * @param jid JID do contato (ex: 5511999999999@s.whatsapp.net)
+   * @param highRes Se true, busca em alta resolução (mais lento)
+   * @returns URL da foto ou null se não tiver
+   */
+  async getProfilePicture(instanceId: string, jid: string, highRes: boolean = false): Promise<string | null> {
+    try {
+      const response = await fetch(
+        `${API_BASE_URL}/api/instances/${instanceId}/profile-picture/${encodeURIComponent(jid)}?highRes=${highRes}`
+      );
+      
+      if (!response.ok) {
+        return null;
+      }
+      
+      const data = await response.json();
+      return data.profilePicture || null;
+    } catch (error) {
+      console.error('Erro ao buscar foto de perfil:', error);
+      return null;
+    }
+  }
+
+  /**
+   * Busca fotos de perfil de múltiplos contatos em paralelo
+   * @param instanceId ID da instância WhatsApp
+   * @param jids Array de JIDs dos contatos
+   * @param highRes Se true, busca em alta resolução
+   * @returns Objeto com JID como chave e URL como valor
+   */
+  async getProfilePictures(instanceId: string, jids: string[], highRes: boolean = false): Promise<{ [jid: string]: string | null }> {
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/instances/${instanceId}/profile-pictures`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ jids, highRes }),
+      });
+      
+      if (!response.ok) {
+        return {};
+      }
+      
+      const data = await response.json();
+      return data.profilePictures || {};
+    } catch (error) {
+      console.error('Erro ao buscar fotos de perfil:', error);
+      return {};
     }
   }
 }
