@@ -75,7 +75,7 @@ export const ChatWindow: React.FC<ChatWindowProps> = ({
     }
     
     // Se ainda não tem critérios, mostrar alerta
-    if (!criteriaToUse || !Object.values(criteriaToUse).some(v => v.trim() !== '')) {
+    if (!criteriaToUse || !(Object.values(criteriaToUse) as string[]).some(v => v.trim() !== '')) {
       alert('Por favor, configure os critérios de avaliação primeiro na aba AJUSTES > Critérios de Avaliação.');
       return;
     }
