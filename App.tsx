@@ -129,11 +129,18 @@ const App: React.FC = () => {
 
         return prev.map(s => {
           if (s.id === sessionId) {
+            // Atualizar nome do contato se recebemos um nome melhor (não numérico)
+            const currentNameIsNumeric = /^\+?\d[\d\s\-()]+$/.test(s.contactName);
+            const newNameIsNumeric = /^\+?\d[\d\s\-()]+$/.test(contactName);
+            const shouldUpdateName = currentNameIsNumeric && !newNameIsNumeric;
+            
             return {
               ...s,
               messages: [...s.messages, newMessage],
               lastMessage: message.body,
               timestamp: newMessage.timestamp,
+              // Atualizar nome se o novo nome for melhor (nome real vs número)
+              ...(shouldUpdateName && { contactName: contactName }),
             };
           }
           return s;

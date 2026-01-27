@@ -44,6 +44,15 @@ interface ProfilePictureCache {
   };
 }
 
+// Cache para nomes de contatos
+interface ContactNameCache {
+  [jid: string]: {
+    name: string;
+    notify?: string; // Nome de notificação (pushName)
+    verifiedName?: string; // Nome verificado (business)
+  };
+}
+
 // Tipos de mídia suportados
 type MediaType = 'image' | 'video' | 'audio' | 'document' | 'sticker';
 
@@ -54,6 +63,7 @@ export class WhatsAppManager extends EventEmitter {
   private messageCache: MessageCache = {};
   private lidPnMapping: LidPnMapping = {};
   private profilePictureCache: ProfilePictureCache = {};
+  private contactNameCache: ContactNameCache = {};
   private readonly GROUP_CACHE_TTL = 5 * 60 * 1000; // 5 minutos
   private readonly MESSAGE_CACHE_SIZE = 1000; // Limite de mensagens em cache
   private readonly PROFILE_PIC_CACHE_TTL = 30 * 60 * 1000; // 30 minutos para fotos de perfil
@@ -242,6 +252,47 @@ export class WhatsAppManager extends EventEmitter {
    */
   public getLidFromPn(pn: string): string | undefined {
     return this.lidPnMapping[pn];
+  }
+
+  /**
+   * Armazena informações de um contato no cache
+   * Mescla com informações existentes para não perder dados
+   */
+  private storeContactInfo(contact: any): void {
+    if (!contact?.id) return;
+    
+    const jid = contact.id;
+    const existing = this.contactNameCache[jid] || { name: '', notify: undefined, verifiedName: undefined };
+    
+    // Mesclar informações, priorizando novos valores não-vazios
+    const updated = {
+      name: contact.name || existing.name || '',
+      notify: contact.notify || existing.notify,
+      verifiedName: contact.verifiedName || existing.verifiedName,
+    };
+    
+    // Só armazenar se tivermos algum nome
+    if (updated.name || updated.notify || updated.verifiedName) {
+      this.contactNameCache[jid] = updated;
+      
+      // Se o JID for LID e tivermos um PN, armazenar também pelo PN
+      if (jid.includes('@lid') && contact.phoneNumber) {
+        const pnJid = contact.phoneNumber + '@s.whatsapp.net';
+        this.contactNameCache[pnJid] = this.contactNameCache[jid];
+      }
+    }
+  }
+
+  /**
+   * Obtém o nome salvo de um contato
+   * Prioridade: nome salvo > nome de notificação (pushName) > nome verificado (business)
+   */
+  public getContactName(jid: string): string | undefined {
+    const cached = this.contactNameCache[jid];
+    if (!cached) return undefined;
+    
+    // Prioridade: nome salvo na agenda > pushName > verifiedName
+    return cached.name || cached.notify || cached.verifiedName;
   }
 
   /**
@@ -477,6 +528,16 @@ export class WhatsAppManager extends EventEmitter {
           // Na v7, usar extractBestIdentifier para lidar com LIDs
           const remoteJid = this.extractBestIdentifier(msg.key, socket);
           
+          // Capturar pushName (nome de notificação) e armazenar no cache
+          // O pushName vem junto com cada mensagem e é o nome que o contato definiu no WhatsApp
+          const msgAny = msg as any;
+          if (msgAny.pushName && remoteJid) {
+            this.storeContactInfo({
+              id: remoteJid,
+              notify: msgAny.pushName,
+            });
+          }
+          
           // Ignorar mensagens de grupo por enquanto (pode ser configurável depois)
           if (remoteJid.includes('@g.us')) {
             console.log('Ignorando mensagem de grupo:', remoteJid);
@@ -607,9 +668,14 @@ export class WhatsAppManager extends EventEmitter {
       socket.ev.on('contacts.upsert', (contacts) => {
         console.log(`👤 ${contacts.length} contato(s) adicionado(s) para instância ${instanceId}`);
         
-        // Extrair mapeamentos LID <-> PN dos novos contatos
+        // Armazenar informações dos contatos e extrair mapeamentos LID <-> PN
         for (const contact of contacts) {
           const contactAny = contact as any;
+          
+          // Armazenar nome do contato no cache
+          this.storeContactInfo(contactAny);
+          
+          // Extrair mapeamentos LID <-> PN
           if (contactAny.id && contactAny.phoneNumber && contactAny.id.includes('@lid')) {
             this.storeLidPnMapping(contactAny.id, contactAny.phoneNumber);
           }
@@ -624,6 +690,12 @@ export class WhatsAppManager extends EventEmitter {
       // contacts.update - Contato atualizado
       socket.ev.on('contacts.update', (updates) => {
         console.log(`👤 ${updates.length} contato(s) atualizado(s) para instância ${instanceId}`);
+        
+        // Atualizar cache de nomes
+        for (const contact of updates) {
+          this.storeContactInfo(contact);
+        }
+        
         this.emit('contactsUpdate', instanceId, updates);
       });
 
@@ -719,10 +791,15 @@ export class WhatsAppManager extends EventEmitter {
           this.emit('chats', instanceId, chats);
         }
 
-        // Processar contatos e extrair mapeamentos LID <-> PN
+        // Processar contatos, armazenar nomes e extrair mapeamentos LID <-> PN
         if (contacts && contacts.length > 0) {
           for (const contact of contacts) {
             const contactAny = contact as any;
+            
+            // Armazenar nome do contato no cache
+            this.storeContactInfo(contactAny);
+            
+            // Extrair mapeamentos LID <-> PN
             if (contactAny.id && contactAny.phoneNumber && contactAny.id.includes('@lid')) {
               this.storeLidPnMapping(contactAny.id, contactAny.phoneNumber);
             }
@@ -730,6 +807,7 @@ export class WhatsAppManager extends EventEmitter {
               this.storeLidPnMapping(contactAny.lid, contactAny.id);
             }
           }
+          console.log(`📇 ${contacts.length} contatos armazenados no cache`);
           this.emit('contacts', instanceId, contacts);
         }
 
@@ -875,13 +953,23 @@ export class WhatsAppManager extends EventEmitter {
   private extractContactName(remoteJid: string): string {
     if (!remoteJid) return 'Desconhecido';
     
+    // Primeiro, verificar se temos o nome salvo no cache
+    const savedName = this.getContactName(remoteJid);
+    if (savedName) {
+      return savedName;
+    }
+    
     // Remover sufixo @s.whatsapp.net ou @lid
     let number = remoteJid.split('@')[0];
     
-    // Se for LID, tentar obter PN
+    // Se for LID, tentar obter PN e verificar cache pelo PN
     if (remoteJid.includes('@lid')) {
       const pn = this.getPnFromLid(remoteJid);
       if (pn) {
+        // Verificar cache pelo PN também
+        const pnName = this.getContactName(pn);
+        if (pnName) return pnName;
+        
         number = pn.split('@')[0];
       } else {
         return `LID: ${number.substring(0, 8)}...`;
@@ -892,8 +980,14 @@ export class WhatsAppManager extends EventEmitter {
     if (number.length === 13 && number.startsWith('55')) {
       const ddd = number.substring(2, 4);
       const num = number.substring(4);
-      return `+${number} (${ddd}) ${num.substring(0, 5)}-${num.substring(5)}`;
+      return `+55 (${ddd}) ${num.substring(0, 5)}-${num.substring(5)}`;
     }
+    
+    // Para outros formatos, apenas retornar com +
+    if (number.length >= 10) {
+      return `+${number}`;
+    }
+    
     return number;
   }
 
