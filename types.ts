@@ -30,6 +30,8 @@ export interface ChatSession {
   analysisHistory: AnalysisEntry[];
   criteriaConfig?: CriteriaConfig;
   heatmapHistory?: HeatmapHistoryEntry[];
+  markedAsSale?: boolean;
+  salesScriptHistory?: SalesScriptHistoryEntry[];
 }
 
 export interface AnalysisResult {
@@ -69,4 +71,32 @@ export interface User {
   id: string;
   email: string;
   name: string;
+}
+
+// Script de Vendas gerado por IA
+export interface SalesScript {
+  titulo: string;
+  resumo_conversa: string;
+  gatilhos_identificados: string[];
+  script_recomendado: ScriptStep[];
+  dicas_aplicacao: string[];
+  objecoes_previstas: ObjecaoResposta[];
+}
+
+export interface ScriptStep {
+  etapa: number;
+  titulo: string;
+  fala_sugerida: string;
+  objetivo: string;
+}
+
+export interface ObjecaoResposta {
+  objecao: string;
+  resposta_sugerida: string;
+}
+
+export interface SalesScriptHistoryEntry {
+  id: string;
+  timestamp: string;
+  script: SalesScript;
 }

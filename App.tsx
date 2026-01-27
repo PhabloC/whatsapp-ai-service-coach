@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { QRCodeScanner } from './components/qr-code-scanner/QRCodeScanner';
-import { ChatSession, AnalysisEntry, Message, CriteriaConfig, HeatmapAnalysis } from './types';
+import { ChatSession, AnalysisEntry, Message, CriteriaConfig, HeatmapAnalysis, SalesScript } from './types';
 import { ChatWindow } from './components/chat-window/ChatWindow';
 import { ConnectionInstance } from './components/sidebar/types';
 import { Dashboard } from './components/dashboard/Dashboard';
@@ -205,9 +205,14 @@ const App: React.FC = () => {
     ));
   };
 
-  const updateSessionCriteria = (sessionId: string, criteria: CriteriaConfig) => {
+  const updateSessionCriteria = (sessionId: string, criteria: CriteriaConfig, generatedPrompt?: string) => {
     setSessions(prev => prev.map(s => 
-      s.id === sessionId ? { ...s, criteriaConfig: criteria } : s
+      s.id === sessionId ? { 
+        ...s, 
+        criteriaConfig: criteria,
+        // Se tiver prompt gerado, atualizar o customPrompt da sessão
+        customPrompt: generatedPrompt || s.customPrompt 
+      } : s
     ));
   };
 
@@ -257,6 +262,29 @@ const App: React.FC = () => {
           messages: [...s.messages, message],
           lastMessage: message.text,
           timestamp: message.timestamp
+        };
+      }
+      return s;
+    }));
+  };
+
+  const handleMarkAsSale = (sessionId: string, markedAsSale: boolean) => {
+    setSessions(prev => prev.map(s => 
+      s.id === sessionId ? { ...s, markedAsSale } : s
+    ));
+  };
+
+  const handleSaveSalesScript = (sessionId: string, script: SalesScript) => {
+    setSessions(prev => prev.map(s => {
+      if (s.id === sessionId) {
+        const newScriptHistory = s.salesScriptHistory || [];
+        return {
+          ...s,
+          salesScriptHistory: [{ 
+            id: Date.now().toString(), 
+            timestamp: new Date().toLocaleString('pt-BR'), 
+            script 
+          }, ...newScriptHistory]
         };
       }
       return s;
@@ -366,12 +394,15 @@ const App: React.FC = () => {
         <Dashboard sessions={sessions} connections={connections} />
       ) : (
         <ChatWindow 
-          session={activeSession} 
+          session={activeSession}
+          userId={user?.id}
           onUpdateSessionPrompt={updateSessionPrompt}
           onUpdateSessionCriteria={updateSessionCriteria}
           onSaveAnalysis={handleSaveAnalysis}
           onSaveHeatmap={handleSaveHeatmapAnalysis}
           onInjectMessage={handleInjectMessage}
+          onMarkAsSale={handleMarkAsSale}
+          onSaveSalesScript={handleSaveSalesScript}
           instanceCriteria={instanceCriteria}
         />
       )}
