@@ -28,8 +28,11 @@ export const Sidebar: React.FC<SidebarProps> = ({
     string | null
   >(null);
 
+  // Limite de conversas para exibir (melhora performance)
+  const MAX_DISPLAYED_CONVERSATIONS = 50;
+
   // Filtra sessões baseado no termo de busca
-  const filteredSessions = useMemo(() => {
+  const { filteredSessions, totalSessions, hasMoreSessions } = useMemo(() => {
     // Filtrar sessões inválidas (status@broadcast, etc) e remover duplicatas
     const validSessions = sessions.filter((session) => {
       // Remover sessões de status e outras inválidas
@@ -51,17 +54,36 @@ export const Sidebar: React.FC<SidebarProps> = ({
       return bTime - aTime; // Ordem decrescente (mais recente primeiro)
     });
 
-    if (!searchFilter.trim()) return sortedSessions;
+    const totalSessions = sortedSessions.length;
+    const hasMoreSessions = totalSessions > MAX_DISPLAYED_CONVERSATIONS;
+
+    // Limitar número de conversas exibidas (melhora performance)
+    const limitedSessions = sortedSessions.slice(
+      0,
+      MAX_DISPLAYED_CONVERSATIONS,
+    );
+
+    if (!searchFilter.trim()) {
+      return {
+        filteredSessions: limitedSessions,
+        totalSessions,
+        hasMoreSessions,
+      };
+    }
 
     const term = searchFilter.toLowerCase();
-    const filtered = sortedSessions.filter(
+    const filtered = limitedSessions.filter(
       (session) =>
         session.contactName.toLowerCase().includes(term) ||
         session.lastMessage.toLowerCase().includes(term) ||
         session.messages.some((m) => m.text.toLowerCase().includes(term)),
     );
 
-    return filtered;
+    return {
+      filteredSessions: filtered,
+      totalSessions,
+      hasMoreSessions,
+    };
   }, [sessions, searchFilter]);
 
   const startEditing = (session: ChatSession) => {
@@ -249,7 +271,15 @@ export const Sidebar: React.FC<SidebarProps> = ({
                 </div>
                 {searchFilter && (
                   <p className="text-[10px] text-slate-400 mt-2 px-1">
-                    {filteredSessions.length} de {sessions.length} conversas
+                    {filteredSessions.length} de {totalSessions} conversas
+                    {hasMoreSessions && (
+                      <span
+                        className="text-amber-500 ml-1"
+                        title={`Mostrando apenas as ${MAX_DISPLAYED_CONVERSATIONS} conversas mais recentes`}
+                      >
+                        ⚠️
+                      </span>
+                    )}
                   </p>
                 )}
               </div>
@@ -544,7 +574,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                   Prompts por Conversa
                 </h5>
                 <div className="space-y-3">
-                  {sessions.length === 0 ? (
+                  {filteredSessions.length === 0 ? (
                     <div className="p-4 text-center bg-slate-50 rounded-xl border-2 border-dashed border-slate-200">
                       <p className="text-xs text-slate-400">
                         Nenhuma conversa ainda
@@ -554,7 +584,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                       </p>
                     </div>
                   ) : (
-                    sessions.map((session) => (
+                    filteredSessions.map((session) => (
                       <div
                         key={session.id}
                         className="p-3 bg-white border border-slate-200 rounded-xl shadow-sm space-y-2"

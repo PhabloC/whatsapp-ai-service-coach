@@ -69,6 +69,12 @@ export class WhatsAppManager extends EventEmitter {
   private readonly GROUP_CACHE_TTL = 5 * 60 * 1000; // 5 minutos
   private readonly MESSAGE_CACHE_SIZE = 1000; // Limite de mensagens em cache
   private readonly PROFILE_PIC_CACHE_TTL = 30 * 60 * 1000; // 30 minutos para fotos de perfil
+  // Limite de conversas para processar do histórico (melhora performance)
+  // Processa apenas as N conversas mais recentes para evitar sobrecarga
+  private readonly MAX_HISTORY_CONVERSATIONS = parseInt(
+    process.env.MAX_HISTORY_CONVERSATIONS || "50",
+    10,
+  );
 
   constructor(authDir: string = "./auth") {
     super();
@@ -1013,14 +1019,11 @@ export class WhatsAppManager extends EventEmitter {
           }
 
           if (messages && messages.length > 0) {
-            // Processar mensagens do histórico
-            for (const msg of messages) {
-              if (!msg.message) continue;
+            // Agrupar mensagens por conversa (remoteJid) para limitar número de conversas processadas
+            const messagesByConversation = new Map<string, typeof messages>();
 
-              // Armazenar mensagem no cache (necessário para getMessage)
-              if (msg.key && msg.message) {
-                this.storeMessage(msg.key, msg.message);
-              }
+            for (const msg of messages) {
+              if (!msg.message || !msg.key) continue;
 
               const isFromMe = msg.key.fromMe || false;
               const remoteJid = this.extractBestIdentifier(msg.key, socket);
@@ -1039,39 +1042,83 @@ export class WhatsAppManager extends EventEmitter {
                 continue;
               }
 
-              const mediaInfo = this.extractMediaInfo(msg.message);
-
-              // Extrair texto da mensagem
-              const messageBody = this.extractMessageText(msg.message);
-
-              // FILTRO: Ignorar mensagens vazias ou apenas espaços
-              if (!messageBody || messageBody.trim() === "") {
-                continue;
+              // Agrupar por conversa
+              if (!messagesByConversation.has(remoteJid)) {
+                messagesByConversation.set(remoteJid, []);
               }
+              messagesByConversation.get(remoteJid)!.push(msg);
+            }
 
-              const message: WhatsAppMessage = {
-                id:
-                  msg.key.id ||
-                  `${msg.key.remoteJid}-${msg.messageTimestamp || Date.now()}-${Math.random()}`,
-                from: isFromMe ? socket.user?.id || "" : remoteJid,
-                to: isFromMe ? remoteJid : socket.user?.id || "",
-                body: messageBody,
-                timestamp: msg.messageTimestamp
-                  ? Number(msg.messageTimestamp) * 1000
-                  : Date.now(),
-                isGroup: false,
-                contactName: this.extractContactName(remoteJid),
-                isFromMe: isFromMe,
-                isHistorical: true,
-                mediaType: mediaInfo?.type,
-                hasMedia: !!mediaInfo,
-              };
+            // Ordenar conversas por última mensagem (mais recente primeiro) e limitar
+            const conversationEntries = Array.from(
+              messagesByConversation.entries(),
+            )
+              .map(([remoteJid, msgs]) => {
+                // Encontrar mensagem mais recente da conversa
+                const latestMsg = msgs.reduce((latest, current) => {
+                  const currentTime = current.messageTimestamp || 0;
+                  const latestTime = latest.messageTimestamp || 0;
+                  return currentTime > latestTime ? current : latest;
+                }, msgs[0]);
+                return {
+                  remoteJid,
+                  msgs,
+                  latestTimestamp: latestMsg?.messageTimestamp || 0,
+                };
+              })
+              .sort((a, b) => b.latestTimestamp - a.latestTimestamp) // Mais recente primeiro
+              .slice(0, this.MAX_HISTORY_CONVERSATIONS); // Limitar número de conversas
 
-              this.emit("message", instanceId, message);
+            console.log(
+              `📊 Processando ${conversationEntries.length} conversas mais recentes de ${messagesByConversation.size} totais`,
+            );
+
+            // Processar mensagens apenas das conversas selecionadas
+            let processedMessagesCount = 0;
+            for (const { msgs, remoteJid } of conversationEntries) {
+              for (const msg of msgs) {
+                if (!msg.message || !msg.key) continue;
+
+                // Armazenar mensagem no cache (necessário para getMessage)
+                this.storeMessage(msg.key, msg.message);
+
+                const isFromMe = msg.key.fromMe || false;
+
+                const mediaInfo = this.extractMediaInfo(msg.message);
+
+                // Extrair texto da mensagem
+                const messageBody = this.extractMessageText(msg.message);
+
+                // FILTRO: Ignorar mensagens vazias ou apenas espaços
+                if (!messageBody || messageBody.trim() === "") {
+                  continue;
+                }
+
+                const message: WhatsAppMessage = {
+                  id:
+                    msg.key.id ||
+                    `${msg.key.remoteJid}-${msg.messageTimestamp || Date.now()}-${Math.random()}`,
+                  from: isFromMe ? socket.user?.id || "" : remoteJid,
+                  to: isFromMe ? remoteJid : socket.user?.id || "",
+                  body: messageBody,
+                  timestamp: msg.messageTimestamp
+                    ? Number(msg.messageTimestamp) * 1000
+                    : Date.now(),
+                  isGroup: false,
+                  contactName: this.extractContactName(remoteJid),
+                  isFromMe: isFromMe,
+                  isHistorical: true,
+                  mediaType: mediaInfo?.type,
+                  hasMedia: !!mediaInfo,
+                };
+
+                this.emit("message", instanceId, message);
+                processedMessagesCount++;
+              }
             }
 
             console.log(
-              `✅ ${messages.length} mensagens históricas processadas para instância ${instanceId}`,
+              `✅ ${processedMessagesCount} mensagens históricas processadas de ${messages.length} totais (${conversationEntries.length} conversas) para instância ${instanceId}`,
             );
           }
 

@@ -27,6 +27,10 @@ type AuthPage = "login" | "register" | "reset";
 const STORAGE_KEY_SESSIONS = "whatsapp_coach_sessions";
 const STORAGE_KEY_CRITERIA = "whatsapp_coach_criteria";
 
+// Limite de conversas para exibir na interface (melhora performance)
+// Exibe apenas as N conversas mais recentes
+const MAX_DISPLAYED_CONVERSATIONS = 50;
+
 // Funções utilitárias para persistência
 const loadSessionsFromStorage = (): ChatSession[] => {
   try {
