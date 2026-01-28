@@ -1,30 +1,40 @@
-import React, { useState, useEffect } from 'react';
-import { QRCodeScanner } from './components/qr-code-scanner/QRCodeScanner';
-import { ChatSession, AnalysisEntry, Message, CriteriaConfig, HeatmapAnalysis, SalesScript } from './types';
-import { ChatWindow } from './components/chat-window/ChatWindow';
-import { ConnectionInstance } from './components/sidebar/types';
-import { Dashboard } from './components/dashboard/Dashboard';
-import { LoadingScreen } from './components/loading';
-import { MainLayout } from './components/layout';
-import { whatsappAPI } from './src/services/whatsapp-api';
-import { Login } from './pages/login';
-import { Register } from './pages/register';
-import { ResetPassword } from './pages/reset-password';
-import { NewPassword } from './pages/new-password';
-import { WelcomeScreen } from './pages/welcome';
-import { useAuth } from './src/hooks/useAuth';
+import React, { useState, useEffect } from "react";
+import { QRCodeScanner } from "./components/qr-code-scanner/QRCodeScanner";
+import {
+  ChatSession,
+  AnalysisEntry,
+  Message,
+  CriteriaConfig,
+  HeatmapAnalysis,
+  SalesScript,
+} from "./types";
+import { ChatWindow } from "./components/chat-window/ChatWindow";
+import { ConnectionInstance } from "./components/sidebar/types";
+import { Dashboard } from "./components/dashboard/Dashboard";
+import { LoadingScreen } from "./components/loading";
+import { MainLayout } from "./components/layout";
+import { whatsappAPI } from "./src/services/whatsapp-api";
+import { Login } from "./pages/login";
+import { Register } from "./pages/register";
+import { ResetPassword } from "./pages/reset-password";
+import { NewPassword } from "./pages/new-password";
+import { WelcomeScreen } from "./pages/welcome";
+import { useAuth } from "./src/hooks/useAuth";
 
-type AuthPage = 'login' | 'register' | 'reset';
+type AuthPage = "login" | "register" | "reset";
 
 // Constantes para localStorage
-const STORAGE_KEY_SESSIONS = 'whatsapp_coach_sessions';
-const STORAGE_KEY_CRITERIA = 'whatsapp_coach_criteria';
+const STORAGE_KEY_SESSIONS = "whatsapp_coach_sessions";
+const STORAGE_KEY_CRITERIA = "whatsapp_coach_criteria";
 
 // Funções utilitárias para persistência
 const loadSessionsFromStorage = (): ChatSession[] => {
   try {
     const stored = localStorage.getItem(STORAGE_KEY_SESSIONS);
-    console.log('📦 Carregando sessões do localStorage:', stored ? 'encontrado' : 'vazio');
+    console.log(
+      "📦 Carregando sessões do localStorage:",
+      stored ? "encontrado" : "vazio",
+    );
     if (stored) {
       const parsed = JSON.parse(stored);
       // Validar estrutura básica
@@ -34,34 +44,70 @@ const loadSessionsFromStorage = (): ChatSession[] => {
       }
     }
   } catch (error) {
-    console.error('Erro ao carregar sessões do localStorage:', error);
+    console.error("Erro ao carregar sessões do localStorage:", error);
   }
   return [];
 };
 
 const saveSessionsToStorage = (sessions: ChatSession[]) => {
   try {
+    // Filtrar sessões inválidas antes de salvar
+    const validSessions = sessions
+      .filter((session) => {
+        // Remover sessões de status e outras inválidas
+        if (session.contactJid?.includes("status@broadcast")) return false;
+        if (session.id?.includes("status@broadcast")) return false;
+        if (!session.contactJid || !session.id) return false;
+        return true;
+      })
+      .filter(
+        (session, idx, arr) =>
+          // Remover duplicatas por ID
+          arr.findIndex((s) => s.id === session.id) === idx,
+      );
+
     // Limitar quantidade de mensagens por sessão para não estourar o localStorage
-    const sessionsToStore = sessions.map(session => ({
+    // Reduzido para 100 mensagens por sessão para evitar problemas de quota
+    const sessionsToStore = validSessions.map((session) => ({
       ...session,
-      messages: session.messages.slice(-500), // Manter últimas 500 mensagens por conversa
+      messages: session.messages.slice(-100), // Manter últimas 100 mensagens por conversa
     }));
     localStorage.setItem(STORAGE_KEY_SESSIONS, JSON.stringify(sessionsToStore));
-    console.log(`💾 ${sessions.length} sessões salvas no localStorage`);
+    console.log(
+      `💾 ${sessionsToStore.length} sessões válidas salvas no localStorage (${sessions.length - sessionsToStore.length} filtradas)`,
+    );
   } catch (error) {
-    console.error('Erro ao salvar sessões no localStorage:', error);
+    console.error("Erro ao salvar sessões no localStorage:", error);
     // Se der erro de quota, tentar salvar com menos mensagens
     try {
-      const minimalSessions = sessions.map(session => ({
+      const validSessions = sessions
+        .filter((session) => {
+          if (session.contactJid?.includes("status@broadcast")) return false;
+          if (session.id?.includes("status@broadcast")) return false;
+          if (!session.contactJid || !session.id) return false;
+          return true;
+        })
+        .filter(
+          (session, idx, arr) =>
+            arr.findIndex((s) => s.id === session.id) === idx,
+        );
+
+      // Redução ainda mais agressiva em caso de erro de quota
+      const minimalSessions = validSessions.map((session) => ({
         ...session,
-        messages: session.messages.slice(-100),
-        analysisHistory: session.analysisHistory.slice(-10),
-        heatmapHistory: session.heatmapHistory?.slice(-5),
-        salesScriptHistory: session.salesScriptHistory?.slice(-5),
+        messages: session.messages.slice(-50), // Apenas últimas 50 mensagens
+        analysisHistory: session.analysisHistory.slice(-5), // Apenas últimas 5 análises
+        heatmapHistory: session.heatmapHistory?.slice(-3), // Apenas últimos 3 heatmaps
+        salesScriptHistory: session.salesScriptHistory?.slice(-3), // Apenas últimos 3 scripts
       }));
-      localStorage.setItem(STORAGE_KEY_SESSIONS, JSON.stringify(minimalSessions));
+      localStorage.setItem(
+        STORAGE_KEY_SESSIONS,
+        JSON.stringify(minimalSessions),
+      );
     } catch {
-      console.error('Não foi possível salvar sessões mesmo com dados reduzidos');
+      console.error(
+        "Não foi possível salvar sessões mesmo com dados reduzidos",
+      );
     }
   }
 };
@@ -74,7 +120,7 @@ const loadCriteriaFromStorage = (): Map<string, CriteriaConfig> => {
       return new Map(Object.entries(parsed));
     }
   } catch (error) {
-    console.error('Erro ao carregar critérios do localStorage:', error);
+    console.error("Erro ao carregar critérios do localStorage:", error);
   }
   return new Map();
 };
@@ -84,32 +130,36 @@ const saveCriteriaToStorage = (criteria: Map<string, CriteriaConfig>) => {
     const obj = Object.fromEntries(criteria);
     localStorage.setItem(STORAGE_KEY_CRITERIA, JSON.stringify(obj));
   } catch (error) {
-    console.error('Erro ao salvar critérios no localStorage:', error);
+    console.error("Erro ao salvar critérios no localStorage:", error);
   }
 };
 
 const App: React.FC = () => {
-  const { 
-    user, 
-    loading: authLoading, 
-    error: authError, 
+  const {
+    user,
+    loading: authLoading,
+    error: authError,
     isRecoveryMode,
-    signIn, 
-    signUp, 
-    signOut, 
-    resetPassword, 
+    signIn,
+    signUp,
+    signOut,
+    resetPassword,
     updatePassword,
     clearError,
-    clearRecoveryMode 
+    clearRecoveryMode,
   } = useAuth();
-  const [authPage, setAuthPage] = useState<AuthPage>('login');
+  const [authPage, setAuthPage] = useState<AuthPage>("login");
   const [sessions, setSessions] = useState<ChatSession[]>([]);
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
   const [showQRScanner, setShowQRScanner] = useState(false);
   const [isConnected, setIsConnected] = useState(false);
   const [connections, setConnections] = useState<ConnectionInstance[]>([]);
-  const [currentView, setCurrentView] = useState<'chats' | 'dashboard' | 'settings'>('chats');
-  const [instanceCriteria, setInstanceCriteria] = useState<Map<string, CriteriaConfig>>(new Map());
+  const [currentView, setCurrentView] = useState<
+    "chats" | "dashboard" | "settings"
+  >("chats");
+  const [instanceCriteria, setInstanceCriteria] = useState<
+    Map<string, CriteriaConfig>
+  >(new Map());
 
   // Estado para controlar carregamento inicial das conexões
   const [loadingConnections, setLoadingConnections] = useState(true);
@@ -121,16 +171,39 @@ const App: React.FC = () => {
     if (user && !hasLoadedFromStorage) {
       const storedSessions = loadSessionsFromStorage();
       const storedCriteria = loadCriteriaFromStorage();
-      
+
       if (storedSessions.length > 0) {
-        console.log(`📦 Restaurando ${storedSessions.length} sessões do localStorage`);
-        setSessions(storedSessions);
+        // Filtrar sessões inválidas (status@broadcast, etc) e remover duplicatas
+        const validSessions = storedSessions
+          .filter((session) => {
+            // Remover sessões de status e outras inválidas
+            if (session.contactJid?.includes("status@broadcast")) return false;
+            if (session.id?.includes("status@broadcast")) return false;
+            if (!session.contactJid || !session.id) return false;
+            return true;
+          })
+          .filter(
+            (session, idx, arr) =>
+              // Remover duplicatas por ID
+              arr.findIndex((s) => s.id === session.id) === idx,
+          )
+          .sort((a, b) => {
+            // Ordenar por última mensagem (mais recente primeiro)
+            const aTime = a.lastMessageTimestamp || 0;
+            const bTime = b.lastMessageTimestamp || 0;
+            return bTime - aTime;
+          });
+
+        console.log(
+          `📦 Restaurando ${validSessions.length} sessões válidas do localStorage (${storedSessions.length - validSessions.length} filtradas)`,
+        );
+        setSessions(validSessions);
       }
-      
+
       if (storedCriteria.size > 0) {
         setInstanceCriteria(storedCriteria);
       }
-      
+
       setHasLoadedFromStorage(true);
     }
   }, [user, hasLoadedFromStorage]);
@@ -139,11 +212,11 @@ const App: React.FC = () => {
   useEffect(() => {
     // Só salvar após o carregamento inicial ter sido feito
     if (!hasLoadedFromStorage) return;
-    
+
     const timeoutId = setTimeout(() => {
       saveSessionsToStorage(sessions);
     }, 1000); // Debounce de 1 segundo para evitar escritas excessivas
-    
+
     return () => clearTimeout(timeoutId);
   }, [sessions, hasLoadedFromStorage]);
 
@@ -157,26 +230,29 @@ const App: React.FC = () => {
   useEffect(() => {
     if (!user) return;
 
-    console.log('🔄 useEffect de conexões iniciado - user:', user.email);
+    console.log("🔄 useEffect de conexões iniciado - user:", user.email);
 
     const initializeConnections = async () => {
       setLoadingConnections(true);
       try {
-        console.log('🔌 Conectando WebSocket...');
+        console.log("🔌 Conectando WebSocket...");
         whatsappAPI.connect();
-        
+
         // Tentar restaurar sessão automaticamente
         const restoredInstance = await whatsappAPI.autoRestoreSession();
-        
+
         if (restoredInstance) {
-          console.log('✅ Sessão restaurada automaticamente:', restoredInstance.id);
+          console.log(
+            "✅ Sessão restaurada automaticamente:",
+            restoredInstance.id,
+          );
         }
-        
+
         // Carregar todas as instâncias (incluindo a restaurada)
         const instances = await loadInstances();
-        console.log('📱 Instâncias carregadas:', instances.length);
+        console.log("📱 Instâncias carregadas:", instances.length);
       } catch (error) {
-        console.error('Erro ao inicializar conexões:', error);
+        console.error("Erro ao inicializar conexões:", error);
       } finally {
         setLoadingConnections(false);
       }
@@ -185,26 +261,43 @@ const App: React.FC = () => {
     initializeConnections();
 
     const handleMessage = (data: { instanceId: string; message: any }) => {
-      console.log('📨 App.tsx recebeu mensagem:', data);
+      console.log("📨 App.tsx recebeu mensagem:", data);
       const { instanceId, message } = data;
-      const contactName = message.contactName || message.from.split('@')[0];
+      const contactName = message.contactName || message.from.split("@")[0];
       const isFromMe = message.isFromMe || false;
-      const sender: 'client' | 'agent' = isFromMe ? 'agent' : 'client';
+      const sender: "client" | "agent" = isFromMe ? "agent" : "client";
       const clientJid = isFromMe ? message.to : message.from;
+
+      // Ignorar mensagens de status e outras inválidas
+      if (clientJid?.includes("status@broadcast") || !clientJid) {
+        return;
+      }
+
       const sessionId = `${instanceId}-${clientJid}`;
       const messageTimestamp = message.timestamp; // timestamp em milissegundos
       const isHistorical = message.isHistorical || false;
-      console.log(`📨 Processando mensagem para sessão ${sessionId}:`, message.body?.substring(0, 50));
-      
-      setSessions(prev => {
-        let session = prev.find(s => s.id === sessionId);
+      console.log(
+        `📨 Processando mensagem para sessão ${sessionId}:`,
+        message.body?.substring(0, 50),
+      );
+
+      setSessions((prev) => {
+        // Verificar duplicatas antes de processar
+        const duplicateIds = prev
+          .filter((s, idx) => prev.findIndex((p) => p.id === s.id) !== idx)
+          .map((s) => s.id);
+
+        let session = prev.find((s) => s.id === sessionId);
 
         // Criar nova mensagem
         const newMessage: Message = {
           id: message.id,
           sender: sender,
           text: message.body,
-          timestamp: new Date(messageTimestamp).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }),
+          timestamp: new Date(messageTimestamp).toLocaleTimeString("pt-BR", {
+            hour: "2-digit",
+            minute: "2-digit",
+          }),
           contactName: contactName,
           rawTimestamp: messageTimestamp, // Guardar timestamp original para ordenação
         };
@@ -212,7 +305,7 @@ const App: React.FC = () => {
         if (!session) {
           let instanceCriteriaConfig: CriteriaConfig | undefined;
           for (const [instId, criteria] of instanceCriteria.entries()) {
-            if (sessionId.startsWith(instId + '-')) {
+            if (sessionId.startsWith(instId + "-")) {
               instanceCriteriaConfig = criteria;
               break;
             }
@@ -223,7 +316,10 @@ const App: React.FC = () => {
             id: sessionId,
             contactName: contactName,
             lastMessage: message.body,
-            timestamp: new Date(messageTimestamp).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }),
+            timestamp: new Date(messageTimestamp).toLocaleTimeString("pt-BR", {
+              hour: "2-digit",
+              minute: "2-digit",
+            }),
             lastMessageTimestamp: messageTimestamp,
             messages: [newMessage],
             analysisHistory: [],
@@ -233,15 +329,29 @@ const App: React.FC = () => {
           };
 
           // Buscar foto de perfil assincronamente
-          whatsappAPI.getProfilePicture(instanceId, clientJid).then(profilePic => {
-            if (profilePic) {
-              setSessions(prevSessions => 
-                prevSessions.map(s => 
-                  s.id === sessionId ? { ...s, profilePicture: profilePic } : s
-                )
-              );
-            }
-          }).catch(err => console.error('Erro ao buscar foto de perfil:', err));
+          whatsappAPI
+            .getProfilePicture(instanceId, clientJid)
+            .then((profilePic) => {
+              if (profilePic) {
+                setSessions((prevSessions) =>
+                  prevSessions.map((s) =>
+                    s.id === sessionId
+                      ? { ...s, profilePicture: profilePic }
+                      : s,
+                  ),
+                );
+              }
+            })
+            .catch((err) =>
+              console.error("Erro ao buscar foto de perfil:", err),
+            );
+
+          // Verificar se já existe sessão com mesmo ID antes de adicionar
+          const existingSession = prev.find((s) => s.id === sessionId);
+
+          if (existingSession) {
+            return prev; // Não adicionar duplicata
+          }
 
           // Adicionar nova sessão e ordenar por última mensagem (mais recente primeiro)
           const updatedSessions = [...prev, session].sort((a, b) => {
@@ -254,11 +364,11 @@ const App: React.FC = () => {
         }
 
         // Verificar se mensagem já existe
-        const messageExists = session.messages.some(m => m.id === message.id);
+        const messageExists = session.messages.some((m) => m.id === message.id);
         if (messageExists) return prev;
 
         // Atualizar sessão existente
-        const updatedSessions = prev.map(s => {
+        const updatedSessions = prev.map((s) => {
           if (s.id === sessionId) {
             // Adicionar mensagem e ordenar por timestamp
             const updatedMessages = [...s.messages, newMessage].sort((a, b) => {
@@ -269,18 +379,24 @@ const App: React.FC = () => {
 
             // Encontrar a mensagem mais recente para atualizar lastMessage
             const latestMessage = updatedMessages[updatedMessages.length - 1];
-            const latestTimestamp = latestMessage.rawTimestamp || messageTimestamp;
+            const latestTimestamp =
+              latestMessage.rawTimestamp || messageTimestamp;
 
             // Atualizar nome do contato se recebemos um nome melhor (não numérico)
-            const currentNameIsNumeric = /^\+?\d[\d\s\-()]+$/.test(s.contactName);
+            const currentNameIsNumeric = /^\+?\d[\d\s\-()]+$/.test(
+              s.contactName,
+            );
             const newNameIsNumeric = /^\+?\d[\d\s\-()]+$/.test(contactName);
             const shouldUpdateName = currentNameIsNumeric && !newNameIsNumeric;
-            
+
             return {
               ...s,
               messages: updatedMessages,
               lastMessage: latestMessage.text,
-              timestamp: new Date(latestTimestamp).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }),
+              timestamp: new Date(latestTimestamp).toLocaleTimeString("pt-BR", {
+                hour: "2-digit",
+                minute: "2-digit",
+              }),
               lastMessageTimestamp: latestTimestamp,
               ...(shouldUpdateName && { contactName: contactName }),
             };
@@ -288,39 +404,46 @@ const App: React.FC = () => {
           return s;
         });
 
+        // Remover duplicatas antes de ordenar
+        const uniqueSessions = updatedSessions.filter(
+          (s, idx, arr) => arr.findIndex((sess) => sess.id === s.id) === idx,
+        );
+
         // Ordenar sessões por última mensagem (mais recente primeiro)
-        return updatedSessions.sort((a, b) => {
+        const sortedSessions = uniqueSessions.sort((a, b) => {
           const aTime = a.lastMessageTimestamp || 0;
           const bTime = b.lastMessageTimestamp || 0;
           return bTime - aTime;
         });
+
+        return sortedSessions;
       });
     };
 
     const handleInstanceConnected = () => loadInstances();
     const handleInstanceDisconnected = () => loadInstances();
 
-    whatsappAPI.on('message', handleMessage);
-    whatsappAPI.on('instance_connected', handleInstanceConnected);
-    whatsappAPI.on('instance_disconnected', handleInstanceDisconnected);
+    whatsappAPI.on("message", handleMessage);
+    whatsappAPI.on("instance_connected", handleInstanceConnected);
+    whatsappAPI.on("instance_disconnected", handleInstanceDisconnected);
 
     return () => {
-      whatsappAPI.off('message', handleMessage);
-      whatsappAPI.off('instance_connected', handleInstanceConnected);
-      whatsappAPI.off('instance_disconnected', handleInstanceDisconnected);
+      whatsappAPI.off("message", handleMessage);
+      whatsappAPI.off("instance_connected", handleInstanceConnected);
+      whatsappAPI.off("instance_disconnected", handleInstanceDisconnected);
     };
   }, [user, instanceCriteria]);
 
   // Aplicar critérios da instância quando atualizados
   useEffect(() => {
     if (instanceCriteria.size === 0) return;
-    
-    setSessions(prev => {
+
+    setSessions((prev) => {
       let hasChanges = false;
-      const updated = prev.map(session => {
+      const updated = prev.map((session) => {
         if (!session.criteriaConfig) {
           for (const [instanceId, criteria] of instanceCriteria.entries()) {
-            if (session.id.startsWith(instanceId + '-')) {
+            if (session.id.startsWith(instanceId + "-")) {
               hasChanges = true;
               return { ...session, criteriaConfig: criteria };
             }
@@ -335,18 +458,29 @@ const App: React.FC = () => {
   const loadInstances = async (): Promise<ConnectionInstance[]> => {
     try {
       const instances = await whatsappAPI.getInstances();
-      const connectionInstances: ConnectionInstance[] = instances.map(inst => ({
-        id: inst.id,
-        name: inst.name,
-        status: inst.status === 'connected' ? 'active' : inst.status === 'connecting' || inst.status === 'qr_ready' ? 'connecting' : 'inactive',
-        connectedAt: inst.connectedAt ? new Date(inst.connectedAt).toLocaleString('pt-BR') : undefined,
-        phoneNumber: inst.phoneNumber,
-      }));
+      const connectionInstances: ConnectionInstance[] = instances.map(
+        (inst) => ({
+          id: inst.id,
+          name: inst.name,
+          status:
+            inst.status === "connected"
+              ? "active"
+              : inst.status === "connecting" || inst.status === "qr_ready"
+                ? "connecting"
+                : "inactive",
+          connectedAt: inst.connectedAt
+            ? new Date(inst.connectedAt).toLocaleString("pt-BR")
+            : undefined,
+          phoneNumber: inst.phoneNumber,
+        }),
+      );
       setConnections(connectionInstances);
-      setIsConnected(connectionInstances.some(c => c.status === 'active'));
+      setIsConnected(connectionInstances.some((c) => c.status === "active"));
       return connectionInstances;
     } catch (error) {
-      console.error('Erro ao carregar instâncias:', error);
+      if (import.meta.env.DEV) {
+        console.error("Erro ao carregar instâncias:", error);
+      }
       return [];
     }
   };
@@ -369,7 +503,7 @@ const App: React.FC = () => {
       setIsConnected(true);
       setShowQRScanner(false);
     } catch (error) {
-      console.error('Erro ao conectar:', error);
+      console.error("Erro ao conectar:", error);
     }
   };
 
@@ -379,121 +513,162 @@ const App: React.FC = () => {
 
   const handleDisconnectInstance = async (id: string) => {
     try {
-      setSessions(prev => prev.filter(s => !s.id.startsWith(id + '-')));
-      setConnections(prev => prev.filter(c => c.id !== id));
-      
+      setSessions((prev) => prev.filter((s) => !s.id.startsWith(id + "-")));
+      setConnections((prev) => prev.filter((c) => c.id !== id));
+
       await whatsappAPI.deleteInstance(id);
-      
+
       const updatedConnections = await loadInstances();
-      const remainingConnections = updatedConnections.filter(c => c.id !== id);
-      
-      if (remainingConnections.length === 0 || !remainingConnections.some(c => c.status === 'active')) {
+      const remainingConnections = updatedConnections.filter(
+        (c) => c.id !== id,
+      );
+
+      if (
+        remainingConnections.length === 0 ||
+        !remainingConnections.some((c) => c.status === "active")
+      ) {
         setIsConnected(false);
       }
-      
-      if (activeSessionId && activeSessionId.startsWith(id + '-')) {
+
+      if (activeSessionId && activeSessionId.startsWith(id + "-")) {
         setActiveSessionId(null);
       }
     } catch (error) {
-      console.error('Erro ao remover instância:', error);
+      if (import.meta.env.DEV) {
+        console.error("Erro ao remover instância:", error);
+      }
       await loadInstances();
-      alert('Erro ao remover conexão. Tente novamente.');
+      alert("Erro ao remover conexão. Tente novamente.");
     }
   };
 
   const updateSessionPrompt = (sessionId: string, newPrompt: string) => {
-    setSessions(prev => prev.map(s => 
-      s.id === sessionId ? { ...s, customPrompt: newPrompt } : s
-    ));
+    setSessions((prev) =>
+      prev.map((s) =>
+        s.id === sessionId ? { ...s, customPrompt: newPrompt } : s,
+      ),
+    );
   };
 
-  const updateSessionCriteria = (sessionId: string, criteria: CriteriaConfig, generatedPrompt?: string) => {
-    setSessions(prev => prev.map(s => 
-      s.id === sessionId ? { 
-        ...s, 
-        criteriaConfig: criteria,
-        // Se tiver prompt gerado, atualizar o customPrompt da sessão
-        customPrompt: generatedPrompt || s.customPrompt 
-      } : s
-    ));
+  const updateSessionCriteria = (
+    sessionId: string,
+    criteria: CriteriaConfig,
+    generatedPrompt?: string,
+  ) => {
+    setSessions((prev) =>
+      prev.map((s) =>
+        s.id === sessionId
+          ? {
+              ...s,
+              criteriaConfig: criteria,
+              // Se tiver prompt gerado, atualizar o customPrompt da sessão
+              customPrompt: generatedPrompt || s.customPrompt,
+            }
+          : s,
+      ),
+    );
   };
 
-  const updateInstanceCriteria = (instanceId: string, criteria: CriteriaConfig) => {
-    setInstanceCriteria(prev => {
+  const updateInstanceCriteria = (
+    instanceId: string,
+    criteria: CriteriaConfig,
+  ) => {
+    setInstanceCriteria((prev) => {
       const newMap = new Map(prev);
       newMap.set(instanceId, criteria);
       return newMap;
     });
-    
-    setSessions(prev => prev.map(s => {
-      if (s.id.startsWith(instanceId + '-')) {
-        return { ...s, criteriaConfig: criteria };
-      }
-      return s;
-    }));
+
+    setSessions((prev) =>
+      prev.map((s) => {
+        if (s.id.startsWith(instanceId + "-")) {
+          return { ...s, criteriaConfig: criteria };
+        }
+        return s;
+      }),
+    );
   };
 
-  const handleSaveHeatmapAnalysis = (sessionId: string, heatmap: HeatmapAnalysis) => {
-    setSessions(prev => prev.map(s => {
-      if (s.id === sessionId) {
-        const newHeatmapHistory = s.heatmapHistory || [];
-        return {
-          ...s,
-          heatmapHistory: [{ 
-            id: Date.now().toString(), 
-            timestamp: new Date().toLocaleString('pt-BR'), 
-            analysis: heatmap 
-          }, ...newHeatmapHistory]
-        };
-      }
-      return s;
-    }));
+  const handleSaveHeatmapAnalysis = (
+    sessionId: string,
+    heatmap: HeatmapAnalysis,
+  ) => {
+    setSessions((prev) =>
+      prev.map((s) => {
+        if (s.id === sessionId) {
+          const newHeatmapHistory = s.heatmapHistory || [];
+          return {
+            ...s,
+            heatmapHistory: [
+              {
+                id: Date.now().toString(),
+                timestamp: new Date().toLocaleString("pt-BR"),
+                analysis: heatmap,
+              },
+              ...newHeatmapHistory,
+            ],
+          };
+        }
+        return s;
+      }),
+    );
   };
 
   const handleSaveAnalysis = (sessionId: string, analysis: AnalysisEntry) => {
-    setSessions(prev => prev.map(s => 
-      s.id === sessionId ? { ...s, analysisHistory: [analysis, ...s.analysisHistory] } : s
-    ));
+    setSessions((prev) =>
+      prev.map((s) =>
+        s.id === sessionId
+          ? { ...s, analysisHistory: [analysis, ...s.analysisHistory] }
+          : s,
+      ),
+    );
   };
 
   const handleInjectMessage = (sessionId: string, message: Message) => {
-    setSessions(prev => prev.map(s => {
-      if (s.id === sessionId) {
-        return {
-          ...s,
-          messages: [...s.messages, message],
-          lastMessage: message.text,
-          timestamp: message.timestamp
-        };
-      }
-      return s;
-    }));
+    setSessions((prev) =>
+      prev.map((s) => {
+        if (s.id === sessionId) {
+          return {
+            ...s,
+            messages: [...s.messages, message],
+            lastMessage: message.text,
+            timestamp: message.timestamp,
+          };
+        }
+        return s;
+      }),
+    );
   };
 
   const handleMarkAsSale = (sessionId: string, markedAsSale: boolean) => {
-    setSessions(prev => prev.map(s => 
-      s.id === sessionId ? { ...s, markedAsSale } : s
-    ));
+    setSessions((prev) =>
+      prev.map((s) => (s.id === sessionId ? { ...s, markedAsSale } : s)),
+    );
   };
 
   const handleSaveSalesScript = (sessionId: string, script: SalesScript) => {
-    setSessions(prev => prev.map(s => {
-      if (s.id === sessionId) {
-        const newScriptHistory = s.salesScriptHistory || [];
-        return {
-          ...s,
-          salesScriptHistory: [{ 
-            id: Date.now().toString(), 
-            timestamp: new Date().toLocaleString('pt-BR'), 
-            script 
-          }, ...newScriptHistory]
-        };
-      }
-      return s;
-    }));
+    setSessions((prev) =>
+      prev.map((s) => {
+        if (s.id === sessionId) {
+          const newScriptHistory = s.salesScriptHistory || [];
+          return {
+            ...s,
+            salesScriptHistory: [
+              {
+                id: Date.now().toString(),
+                timestamp: new Date().toLocaleString("pt-BR"),
+                script,
+              },
+              ...newScriptHistory,
+            ],
+          };
+        }
+        return s;
+      }),
+    );
   };
 
-  const activeSession = sessions.find(s => s.id === activeSessionId) || null;
+  const activeSession = sessions.find((s) => s.id === activeSessionId) || null;
 
   // Tela de carregamento inicial
   if (authLoading && !user && !isRecoveryMode) {
@@ -503,14 +678,14 @@ const App: React.FC = () => {
   // Tela de nova senha (após clicar no link do email)
   if (isRecoveryMode) {
     return (
-      <NewPassword 
+      <NewPassword
         loading={authLoading}
         error={authError}
         onUpdatePassword={updatePassword}
         onClearError={clearError}
         onNavigateToLogin={() => {
           clearRecoveryMode();
-          setAuthPage('login');
+          setAuthPage("login");
         }}
       />
     );
@@ -518,38 +693,38 @@ const App: React.FC = () => {
 
   // Telas de autenticação
   if (!user) {
-    if (authPage === 'register') {
+    if (authPage === "register") {
       return (
-        <Register 
+        <Register
           loading={authLoading}
           error={authError}
           onSignUp={signUp}
           onClearError={clearError}
-          onNavigateToLogin={() => setAuthPage('login')}
+          onNavigateToLogin={() => setAuthPage("login")}
         />
       );
     }
 
-    if (authPage === 'reset') {
+    if (authPage === "reset") {
       return (
-        <ResetPassword 
+        <ResetPassword
           loading={authLoading}
           error={authError}
           onResetPassword={resetPassword}
           onClearError={clearError}
-          onNavigateToLogin={() => setAuthPage('login')}
+          onNavigateToLogin={() => setAuthPage("login")}
         />
       );
     }
 
     return (
-      <Login 
+      <Login
         loading={authLoading}
         error={authError}
         onSignIn={signIn}
         onClearError={clearError}
-        onNavigateToRegister={() => setAuthPage('register')}
-        onNavigateToReset={() => setAuthPage('reset')}
+        onNavigateToRegister={() => setAuthPage("register")}
+        onNavigateToReset={() => setAuthPage("reset")}
       />
     );
   }
@@ -557,7 +732,7 @@ const App: React.FC = () => {
   // Tela de Conexão QR Code
   if (showQRScanner) {
     return (
-      <QRCodeScanner 
+      <QRCodeScanner
         onConnect={handleConnectWhatsApp}
         onCancel={() => setShowQRScanner(false)}
       />
@@ -572,7 +747,7 @@ const App: React.FC = () => {
   // Tela de boas-vindas (sem conexão)
   if (!isConnected) {
     return (
-      <WelcomeScreen 
+      <WelcomeScreen
         userName={user.name}
         onLogout={handleLogout}
         onConnect={handleAddConnection}
@@ -597,10 +772,10 @@ const App: React.FC = () => {
       instanceCriteria={instanceCriteria}
       onUpdateInstanceCriteria={updateInstanceCriteria}
     >
-      {currentView === 'dashboard' ? (
+      {currentView === "dashboard" ? (
         <Dashboard sessions={sessions} connections={connections} />
       ) : (
-        <ChatWindow 
+        <ChatWindow
           session={activeSession}
           userId={user?.id}
           onUpdateSessionPrompt={updateSessionPrompt}
