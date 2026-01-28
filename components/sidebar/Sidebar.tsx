@@ -33,11 +33,13 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
   // Filtra sessões baseado no termo de busca
   const { filteredSessions, totalSessions, hasMoreSessions } = useMemo(() => {
-    // Filtrar sessões inválidas (status@broadcast, grupos, etc) e remover duplicatas
+    // Filtrar sessões inválidas (status, grupos, etc) e remover duplicatas
     const validSessions = sessions.filter((session) => {
-      // Remover sessões de status e outras inválidas
-      if (session.contactJid?.includes("status@broadcast")) return false;
-      if (session.id?.includes("status@broadcast")) return false;
+      // Remover sessões de status (pode vir em diferentes formatos)
+      if (session.contactJid?.includes("status@")) return false;
+      if (session.id?.includes("status@")) return false;
+      if (session.contactJid?.includes("@broadcast")) return false;
+      if (session.id?.includes("@broadcast")) return false;
       // FILTRO: Remover conversas de grupo
       if (session.contactJid?.includes("@g.us")) return false;
       if (session.id?.includes("@g.us")) return false;

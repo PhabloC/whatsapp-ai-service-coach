@@ -8,6 +8,8 @@ import makeWASocket, {
   WAMessageKey,
   downloadMediaMessage,
   getContentType,
+  isJidStatusBroadcast,
+  STORIES_JID,
 } from "baileys";
 import pino from "pino";
 import QRCode from "qrcode";
@@ -341,18 +343,36 @@ export class WhatsAppManager extends EventEmitter {
    * IMPORTANTE: Sempre verifica se é grupo ANTES de usar alternativos
    */
   private extractBestIdentifier(key: any, socket: WASocket): string {
-    // PRIMEIRO: Verificar se o remoteJid original é um grupo
-    // Se for grupo, retornar o remoteJid original (não usar alternativos)
+    // PRIMEIRO: Verificar se o remoteJid original é status ou grupo
+    // Se for status ou grupo, retornar o remoteJid original (não usar alternativos)
     const originalRemoteJid = key.remoteJid || "";
+
+    // FILTRO CRÍTICO: Verificar status ANTES de qualquer processamento
+    // Status aparecem como status@broadcast conforme documentação do Baileys
+    if (
+      isJidStatusBroadcast(originalRemoteJid) ||
+      originalRemoteJid.includes("status@") ||
+      originalRemoteJid.includes("@broadcast") ||
+      originalRemoteJid === STORIES_JID
+    ) {
+      return originalRemoteJid; // Retornar status para ser filtrado depois
+    }
+
     if (originalRemoteJid.includes("@g.us")) {
       return originalRemoteJid; // Retornar grupo para ser filtrado depois
     }
 
     // Para DMs, verificar se tem remoteJidAlt (PN alternativo)
-    // Só usar se o original NÃO for grupo
+    // Só usar se o original NÃO for grupo ou status
     if (key.remoteJidAlt) {
-      // Verificar se o alternativo também não é grupo (por segurança)
-      if (!key.remoteJidAlt.includes("@g.us")) {
+      // Verificar se o alternativo também não é grupo ou status (por segurança)
+      if (
+        !key.remoteJidAlt.includes("@g.us") &&
+        !isJidStatusBroadcast(key.remoteJidAlt) &&
+        !key.remoteJidAlt.includes("status@") &&
+        !key.remoteJidAlt.includes("@broadcast") &&
+        key.remoteJidAlt !== STORIES_JID
+      ) {
         return key.remoteJidAlt;
       }
     }
@@ -653,6 +673,21 @@ export class WhatsAppManager extends EventEmitter {
           // Verificar o remoteJid original primeiro (não usar extractBestIdentifier ainda)
           const originalRemoteJid = msg.key.remoteJid || "";
 
+          // FILTRO CRÍTICO: Ignorar mensagens de status ANTES de processar
+          // Usar função do Baileys para detectar status de forma mais robusta
+          if (
+            isJidStatusBroadcast(originalRemoteJid) ||
+            originalRemoteJid.includes("status@") ||
+            originalRemoteJid.includes("@broadcast") ||
+            originalRemoteJid === STORIES_JID
+          ) {
+            console.log(
+              "Ignorando mensagem de status (originalRemoteJid):",
+              originalRemoteJid,
+            );
+            continue;
+          }
+
           // #region agent log
           fetch(
             "http://127.0.0.1:7244/ingest/4c588078-cb72-4b05-91b7-3d96536f9ac0",
@@ -736,11 +771,13 @@ export class WhatsAppManager extends EventEmitter {
           const remoteJid = this.extractBestIdentifier(msg.key, socket);
 
           // FILTRO: Ignorar mensagens de status do WhatsApp
-          // Status pode vir em diferentes formatos: status@broadcast, status@lid, etc
+          // Usar função do Baileys para detectar status de forma mais robusta
           if (
             !remoteJid ||
+            isJidStatusBroadcast(remoteJid) ||
             remoteJid.includes("status@") ||
-            remoteJid.includes("@broadcast")
+            remoteJid.includes("@broadcast") ||
+            remoteJid === STORIES_JID
           ) {
             console.log("Ignorando mensagem de status:", remoteJid);
             continue;
@@ -812,7 +849,11 @@ export class WhatsAppManager extends EventEmitter {
           const mediaInfo = this.extractMediaInfo(msg.message);
 
           // Verificar se mídia está faltando e tentar atualizar
-          if (mediaInfo && !msg.message[`${mediaInfo.type}Message`]?.url) {
+          if (
+            mediaInfo &&
+            msg.message &&
+            !(msg.message as any)[`${mediaInfo.type}Message`]?.url
+          ) {
             try {
               const updated = await socket.updateMediaMessage(msg as any);
               if (updated) {
@@ -824,6 +865,42 @@ export class WhatsAppManager extends EventEmitter {
             }
           }
 
+          // FILTRO: Ignorar mensagens de protocolo (protocolMessage)
+          // protocolMessage são mensagens de sistema (status updates, revogações, etc)
+          // que não devem ser exibidas como mensagens normais
+          if (msg.message?.protocolMessage) {
+            console.log(
+              "Ignorando mensagem de protocolo (protocolMessage):",
+              msg.key.id,
+            );
+            // #region agent log
+            fetch(
+              "http://127.0.0.1:7244/ingest/4c588078-cb72-4b05-91b7-3d96536f9ac0",
+              {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                  location: "whatsapp-manager.ts:850",
+                  message: "PROTOCOL MESSAGE FILTRADO",
+                  data: {
+                    remoteJid,
+                    originalRemoteJid,
+                    messageId: msg.key.id,
+                    protocolMessageType: Object.keys(
+                      msg.message.protocolMessage || {},
+                    ),
+                  },
+                  timestamp: Date.now(),
+                  sessionId: "debug-session",
+                  runId: "run1",
+                  hypothesisId: "F",
+                }),
+              },
+            ).catch(() => {});
+            // #endregion
+            continue;
+          }
+
           // Extrair texto da mensagem
           const messageBody = this.extractMessageText(msg.message);
 
@@ -831,6 +908,111 @@ export class WhatsAppManager extends EventEmitter {
           if (!messageBody || messageBody.trim() === "") {
             continue;
           }
+
+          // FILTRO: Ignorar mensagens que são apenas "[Mídia ou mensagem não suportada]"
+          // Essas mensagens geralmente são protocolMessages ou atualizações de status
+          if (
+            messageBody === "[Mídia ou mensagem não suportada]" ||
+            messageBody.trim() === "[Mídia ou mensagem não suportada]"
+          ) {
+            console.log(
+              "Ignorando mensagem não suportada (possível status):",
+              msg.key.id,
+            );
+            // #region agent log
+            fetch(
+              "http://127.0.0.1:7244/ingest/4c588078-cb72-4b05-91b7-3d96536f9ac0",
+              {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                  location: "whatsapp-manager.ts:875",
+                  message: "MENSAGEM NÃO SUPORTADA FILTRADA",
+                  data: {
+                    remoteJid,
+                    originalRemoteJid,
+                    messageId: msg.key.id,
+                    messageBody,
+                  },
+                  timestamp: Date.now(),
+                  sessionId: "debug-session",
+                  runId: "run1",
+                  hypothesisId: "F",
+                }),
+              },
+            ).catch(() => {});
+            // #endregion
+            continue;
+          }
+
+          // FILTRO ADICIONAL: Verificar se é status mesmo sem JID de status
+          // Status podem vir como mensagens normais quando visualizados
+          // Verificar se o remoteJid original (antes de extractBestIdentifier) contém status
+          // Mesmo que extractBestIdentifier tenha normalizado, o original pode ter status
+          const msgKeyRemoteJid = msg.key.remoteJid || "";
+          if (
+            isJidStatusBroadcast(msgKeyRemoteJid) ||
+            msgKeyRemoteJid.includes("status@") ||
+            msgKeyRemoteJid.includes("@broadcast") ||
+            msgKeyRemoteJid === STORIES_JID
+          ) {
+            console.log(
+              "Ignorando mensagem de status (msg.key.remoteJid):",
+              msgKeyRemoteJid,
+            );
+            // #region agent log
+            fetch(
+              "http://127.0.0.1:7244/ingest/4c588078-cb72-4b05-91b7-3d96536f9ac0",
+              {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                  location: "whatsapp-manager.ts:850",
+                  message: "STATUS FILTRADO - msg.key.remoteJid",
+                  data: {
+                    msgKeyRemoteJid,
+                    remoteJid,
+                    originalRemoteJid,
+                  },
+                  timestamp: Date.now(),
+                  sessionId: "debug-session",
+                  runId: "run1",
+                  hypothesisId: "F",
+                }),
+              },
+            ).catch(() => {});
+            // #endregion
+            continue;
+          }
+
+          // #region agent log
+          // Log detalhado para identificar status que não têm JID de status
+          fetch(
+            "http://127.0.0.1:7244/ingest/4c588078-cb72-4b05-91b7-3d96536f9ac0",
+            {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                location: "whatsapp-manager.ts:875",
+                message: "Mensagem processada - verificando propriedades",
+                data: {
+                  remoteJid,
+                  originalRemoteJid,
+                  msgKeyRemoteJid,
+                  fromJid,
+                  toJid,
+                  messageBody: messageBody.substring(0, 100),
+                  hasExtendedText: !!msg.message?.extendedTextMessage,
+                  messageKeys: Object.keys(msg.message || {}),
+                },
+                timestamp: Date.now(),
+                sessionId: "debug-session",
+                runId: "run1",
+                hypothesisId: "F",
+              }),
+            },
+          ).catch(() => {});
+          // #endregion
 
           const message: WhatsAppMessage = {
             id: msg.key.id || `${Date.now()}-${Math.random()}`,
@@ -1177,14 +1359,29 @@ export class WhatsAppManager extends EventEmitter {
                 continue; // Ignorar grupo
               }
 
+              // FILTRO CRÍTICO: Verificar status no remoteJid original ANTES de extractBestIdentifier
+              // (originalRemoteJid já foi declarado acima)
+              // Usar função do Baileys para detectar status de forma mais robusta
+              if (
+                isJidStatusBroadcast(originalRemoteJid) ||
+                originalRemoteJid.includes("status@") ||
+                originalRemoteJid.includes("@broadcast") ||
+                originalRemoteJid === STORIES_JID
+              ) {
+                continue; // Ignorar status
+              }
+
               const isFromMe = msg.key.fromMe || false;
               const remoteJid = this.extractBestIdentifier(msg.key, socket);
 
-              // FILTRO: Ignorar mensagens de status do WhatsApp
+              // FILTRO: Verificação adicional de status após extractBestIdentifier
+              // Usar função do Baileys para detectar status de forma mais robusta
               if (
                 !remoteJid ||
+                isJidStatusBroadcast(remoteJid) ||
                 remoteJid.includes("status@") ||
-                remoteJid.includes("@broadcast")
+                remoteJid.includes("@broadcast") ||
+                remoteJid === STORIES_JID
               ) {
                 continue;
               }
@@ -1208,17 +1405,19 @@ export class WhatsAppManager extends EventEmitter {
               .map(([remoteJid, msgs]) => {
                 // Encontrar mensagem mais recente da conversa
                 const latestMsg = msgs.reduce((latest, current) => {
-                  const currentTime = current.messageTimestamp || 0;
-                  const latestTime = latest.messageTimestamp || 0;
-                  return currentTime > latestTime ? current : latest;
+                  const latestTime = Number(latest.messageTimestamp || 0);
+                  const currentMsgTime = Number(current.messageTimestamp || 0);
+                  return currentMsgTime > latestTime ? current : latest;
                 }, msgs[0]);
                 return {
                   remoteJid,
                   msgs,
-                  latestTimestamp: latestMsg?.messageTimestamp || 0,
+                  latestTimestamp: Number(latestMsg?.messageTimestamp) || 0,
                 };
               })
-              .sort((a, b) => b.latestTimestamp - a.latestTimestamp) // Mais recente primeiro
+              .sort(
+                (a, b) => Number(b.latestTimestamp) - Number(a.latestTimestamp),
+              ) // Mais recente primeiro
               .slice(0, this.MAX_HISTORY_CONVERSATIONS); // Limitar número de conversas
 
             console.log(
@@ -1238,11 +1437,26 @@ export class WhatsAppManager extends EventEmitter {
 
                 const mediaInfo = this.extractMediaInfo(msg.message);
 
+                // FILTRO: Ignorar mensagens de protocolo (protocolMessage)
+                // protocolMessage são mensagens de sistema (status updates, revogações, etc)
+                if (msg.message?.protocolMessage) {
+                  continue;
+                }
+
                 // Extrair texto da mensagem
                 const messageBody = this.extractMessageText(msg.message);
 
                 // FILTRO: Ignorar mensagens vazias ou apenas espaços
                 if (!messageBody || messageBody.trim() === "") {
+                  continue;
+                }
+
+                // FILTRO: Ignorar mensagens que são apenas "[Mídia ou mensagem não suportada]"
+                // Essas mensagens geralmente são protocolMessages ou atualizações de status
+                if (
+                  messageBody === "[Mídia ou mensagem não suportada]" ||
+                  messageBody.trim() === "[Mídia ou mensagem não suportada]"
+                ) {
                   continue;
                 }
 

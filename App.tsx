@@ -63,8 +63,9 @@ const loadSessionsFromStorage = (): ChatSession[] => {
       const parsed = JSON.parse(stored);
       // Validar estrutura básica
       if (Array.isArray(parsed)) {
-        // FILTRO CRÍTICO: Remover grupos imediatamente ao carregar
-        const withoutGroups = parsed.filter((session: ChatSession) => {
+        // FILTRO CRÍTICO: Remover grupos e status imediatamente ao carregar
+        const filtered = parsed.filter((session: ChatSession) => {
+          // Remover grupos
           const isGroup =
             session.contactJid?.includes("@g.us") ||
             session.id?.includes("@g.us");
@@ -72,24 +73,52 @@ const loadSessionsFromStorage = (): ChatSession[] => {
             console.log("🧹 Removendo grupo do localStorage:", session.id);
             return false;
           }
+
+          // Remover status (pode vir em diferentes formatos: status@broadcast, status@lid, status@, etc)
+          // Conforme documentação do Baileys, status aparecem como status@broadcast
+          const isStatus =
+            session.contactJid?.includes("status@") ||
+            session.id?.includes("status@") ||
+            session.contactJid?.includes("@broadcast") ||
+            session.id?.includes("@broadcast") ||
+            session.contactJid === "status@broadcast" ||
+            session.id === "status@broadcast";
+          if (isStatus) {
+            console.log("🧹 Removendo status do localStorage:", session.id);
+            return false;
+          }
+
+          // FILTRO ADICIONAL: Remover sessões que têm apenas mensagens não suportadas
+          // Essas geralmente são status ou protocolMessages que já foram salvas
+          if (session.messages && session.messages.length > 0) {
+            const allUnsupported = session.messages.every(
+              (msg) =>
+                msg.text === "[Mídia ou mensagem não suportada]" ||
+                msg.text?.trim() === "[Mídia ou mensagem não suportada]",
+            );
+            if (allUnsupported) {
+              console.log(
+                "🧹 Removendo sessão com apenas mensagens não suportadas (possível status):",
+                session.id,
+              );
+              return false;
+            }
+          }
+
           return true;
         });
 
-        // Se grupos foram removidos, salvar de volta imediatamente
-        if (withoutGroups.length !== parsed.length) {
-          localStorage.setItem(
-            STORAGE_KEY_SESSIONS,
-            JSON.stringify(withoutGroups),
-          );
+        // Se grupos ou status foram removidos, salvar de volta imediatamente
+        if (filtered.length !== parsed.length) {
+          localStorage.setItem(STORAGE_KEY_SESSIONS, JSON.stringify(filtered));
+          const removedCount = parsed.length - filtered.length;
           console.log(
-            `🧹 ${parsed.length - withoutGroups.length} grupo(s) removido(s) do localStorage`,
+            `🧹 ${removedCount} sessão(ões) inválida(s) removida(s) do localStorage (grupos e status)`,
           );
         }
 
-        console.log(
-          `📦 ${withoutGroups.length} sessões carregadas do localStorage`,
-        );
-        return withoutGroups;
+        console.log(`📦 ${filtered.length} sessões carregadas do localStorage`);
+        return filtered;
       }
     }
   } catch (error) {
@@ -103,9 +132,25 @@ const saveSessionsToStorage = (sessions: ChatSession[]) => {
     // Filtrar sessões inválidas antes de salvar
     const validSessions = sessions
       .filter((session) => {
-        // Remover sessões de status e outras inválidas
-        if (session.contactJid?.includes("status@broadcast")) return false;
-        if (session.id?.includes("status@broadcast")) return false;
+        // Remover sessões de status (pode vir em diferentes formatos)
+        if (session.contactJid?.includes("status@")) return false;
+        if (session.id?.includes("status@")) return false;
+        if (session.contactJid?.includes("@broadcast")) return false;
+        if (session.id?.includes("@broadcast")) return false;
+
+        // FILTRO ADICIONAL: Remover sessões que têm apenas mensagens não suportadas
+        // Essas geralmente são status ou protocolMessages
+        if (session.messages && session.messages.length > 0) {
+          const allUnsupported = session.messages.every(
+            (msg) =>
+              msg.text === "[Mídia ou mensagem não suportada]" ||
+              msg.text?.trim() === "[Mídia ou mensagem não suportada]",
+          );
+          if (allUnsupported) {
+            return false;
+          }
+        }
+
         // FILTRO: Remover conversas de grupo
         if (session.contactJid?.includes("@g.us")) return false;
         if (session.id?.includes("@g.us")) return false;
@@ -134,8 +179,11 @@ const saveSessionsToStorage = (sessions: ChatSession[]) => {
     try {
       const validSessions = sessions
         .filter((session) => {
-          if (session.contactJid?.includes("status@broadcast")) return false;
-          if (session.id?.includes("status@broadcast")) return false;
+          // Remover sessões de status (pode vir em diferentes formatos)
+          if (session.contactJid?.includes("status@")) return false;
+          if (session.id?.includes("status@")) return false;
+          if (session.contactJid?.includes("@broadcast")) return false;
+          if (session.id?.includes("@broadcast")) return false;
           // FILTRO: Remover conversas de grupo
           if (session.contactJid?.includes("@g.us")) return false;
           if (session.id?.includes("@g.us")) return false;
@@ -231,9 +279,29 @@ const App: React.FC = () => {
         // Filtrar sessões inválidas (status@broadcast, grupos, etc) e remover duplicatas
         const validSessions = storedSessions
           .filter((session) => {
-            // Remover sessões de status e outras inválidas
-            if (session.contactJid?.includes("status@broadcast")) return false;
-            if (session.id?.includes("status@broadcast")) return false;
+            // Remover sessões de status (pode vir em diferentes formatos)
+            if (session.contactJid?.includes("status@")) return false;
+            if (session.id?.includes("status@")) return false;
+            if (session.contactJid?.includes("@broadcast")) return false;
+            if (session.id?.includes("@broadcast")) return false;
+
+            // FILTRO ADICIONAL: Remover sessões que têm apenas mensagens não suportadas
+            // Essas geralmente são status ou protocolMessages
+            if (session.messages && session.messages.length > 0) {
+              const allUnsupported = session.messages.every(
+                (msg) =>
+                  msg.text === "[Mídia ou mensagem não suportada]" ||
+                  msg.text?.trim() === "[Mídia ou mensagem não suportada]",
+              );
+              if (allUnsupported) {
+                console.log(
+                  "🧹 Removendo sessão com apenas mensagens não suportadas:",
+                  session.id,
+                );
+                return false;
+              }
+            }
+
             // FILTRO: Remover conversas de grupo
             const isGroup =
               session.contactJid?.includes("@g.us") ||
@@ -503,27 +571,85 @@ const App: React.FC = () => {
     const handleMessage = (data: { instanceId: string; message: any }) => {
       console.log("📨 App.tsx recebeu mensagem:", data);
       const { instanceId, message } = data;
+
+      // Extrair JIDs antes de qualquer processamento
+      const fromJid = message.from || "";
+      const toJid = message.to || "";
+
+      // #region agent log
+      fetch(
+        "http://127.0.0.1:7244/ingest/4c588078-cb72-4b05-91b7-3d96536f9ac0",
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            location: "App.tsx:519",
+            message: "Mensagem recebida no frontend",
+            data: {
+              fromJid,
+              toJid,
+              contactName: message.contactName,
+              body: message.body?.substring(0, 50),
+              isFromMe: message.isFromMe,
+            },
+            timestamp: Date.now(),
+            sessionId: "debug-session",
+            runId: "run1",
+            hypothesisId: "F",
+          }),
+        },
+      ).catch(() => {});
+      // #endregion
+
+      // FILTRO CRÍTICO: Ignorar mensagens de status ANTES de processar
+      // Status pode aparecer em from, to, ou ambos
+      if (
+        fromJid.includes("status@") ||
+        toJid.includes("status@") ||
+        fromJid.includes("@broadcast") ||
+        toJid.includes("@broadcast")
+      ) {
+        console.log("🚫 Ignorando mensagem de status:", { fromJid, toJid });
+        // #region agent log
+        fetch(
+          "http://127.0.0.1:7244/ingest/4c588078-cb72-4b05-91b7-3d96536f9ac0",
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              location: "App.tsx:540",
+              message: "STATUS FILTRADO no frontend",
+              data: { fromJid, toJid },
+              timestamp: Date.now(),
+              sessionId: "debug-session",
+              runId: "run1",
+              hypothesisId: "F",
+            }),
+          },
+        ).catch(() => {});
+        // #endregion
+        return;
+      }
+
+      // FILTRO: Ignorar mensagens de grupo (não exibir conversas de grupo)
+      if (fromJid.includes("@g.us") || toJid.includes("@g.us")) {
+        console.log("🚫 Ignorando mensagem de grupo:", { fromJid, toJid });
+        return;
+      }
+
       const contactName = message.contactName || message.from.split("@")[0];
       const isFromMe = message.isFromMe || false;
       const sender: "client" | "agent" = isFromMe ? "agent" : "client";
       const clientJid = isFromMe ? message.to : message.from;
 
-      // Ignorar mensagens de status e outras inválidas
-      if (clientJid?.includes("status@broadcast") || !clientJid) {
-        return;
-      }
-
-      // FILTRO: Ignorar mensagens de grupo (não exibir conversas de grupo)
-      // Verificar tanto 'from' quanto 'to' para garantir que grupos sejam filtrados
-      const fromJid = message.from || "";
-      const toJid = message.to || "";
-
+      // Verificação adicional de segurança
       if (
-        clientJid?.includes("@g.us") ||
-        fromJid.includes("@g.us") ||
-        toJid.includes("@g.us")
+        !clientJid ||
+        clientJid.includes("status@") ||
+        clientJid.includes("@broadcast") ||
+        clientJid.includes("@g.us")
       ) {
-        console.log("Ignorando mensagem de grupo:", {
+        console.log("🚫 Ignorando mensagem inválida:", {
           clientJid,
           fromJid,
           toJid,
@@ -693,6 +819,30 @@ const App: React.FC = () => {
         // Verificar se mensagem já existe
         const messageExists = session.messages.some((m) => m.id === message.id);
         if (messageExists) return prev;
+
+        // VERIFICAÇÃO FINAL DE SEGURANÇA: Garantir que não estamos adicionando mensagem de status
+        // Mesmo que tenha passado pelos filtros anteriores, verificar novamente aqui
+        if (
+          clientJid?.includes("status@") ||
+          clientJid?.includes("@broadcast") ||
+          fromJid.includes("status@") ||
+          toJid.includes("status@") ||
+          fromJid.includes("@broadcast") ||
+          toJid.includes("@broadcast") ||
+          sessionId.includes("status@") ||
+          sessionId.includes("@broadcast")
+        ) {
+          console.log(
+            "🚫 Tentativa de adicionar mensagem de status bloqueada:",
+            {
+              clientJid,
+              fromJid,
+              toJid,
+              sessionId,
+            },
+          );
+          return prev; // Não adicionar mensagem de status
+        }
 
         // Atualizar sessão existente
         const updatedSessions = prev.map((s) => {
