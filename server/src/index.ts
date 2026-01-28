@@ -120,6 +120,7 @@ app.get("/api/instances/:id/qr", (req, res) => {
   if (!instance) {
     return res.status(404).json({ error: "Instância não encontrada" });
   }
+
   res.json({
     qrCode: instance.qrCode,
     status: instance.status,
