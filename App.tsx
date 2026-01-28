@@ -31,6 +31,26 @@ const STORAGE_KEY_CRITERIA = "whatsapp_coach_criteria";
 // Exibe apenas as N conversas mais recentes
 const MAX_DISPLAYED_CONVERSATIONS = 50;
 
+/**
+ * Normaliza um JID para garantir consistência e evitar duplicatas
+ * Remove sufixos como :18, converte LIDs para PNs quando possível
+ */
+const normalizeJid = (jid: string | undefined): string => {
+  if (!jid) return "";
+
+  // Remover sufixos como :18 (device ID)
+  let normalized = jid.split(":")[0];
+
+  // Se for grupo, retornar como está
+  if (normalized.includes("@g.us")) {
+    return normalized;
+  }
+
+  // Se for LID, tentar manter como está por enquanto (será normalizado pelo backend)
+  // O backend já envia o JID normalizado via extractBestIdentifier
+  return normalized;
+};
+
 // Funções utilitárias para persistência
 const loadSessionsFromStorage = (): ChatSession[] => {
   try {
@@ -219,37 +239,179 @@ const App: React.FC = () => {
               session.contactJid?.includes("@g.us") ||
               session.id?.includes("@g.us");
             if (isGroup) {
-              // #region agent log
-              fetch(
-                "http://127.0.0.1:7244/ingest/4c588078-cb72-4b05-91b7-3d96536f9ac0",
-                {
-                  method: "POST",
-                  headers: { "Content-Type": "application/json" },
-                  body: JSON.stringify({
-                    location: "App.tsx:186",
-                    message: "GRUPO REMOVIDO do localStorage",
-                    data: {
-                      sessionId: session.id,
-                      contactJid: session.contactJid,
-                    },
-                    timestamp: Date.now(),
-                    sessionId: "debug-session",
-                    runId: "run1",
-                    hypothesisId: "C",
-                  }),
-                },
-              ).catch(() => {});
-              // #endregion
               return false;
             }
             if (!session.contactJid || !session.id) return false;
             return true;
           })
-          .filter(
-            (session, idx, arr) =>
-              // Remover duplicatas por ID
-              arr.findIndex((s) => s.id === session.id) === idx,
-          )
+          .map((session) => {
+            // Normalizar contactJid e sessionId para evitar duplicatas
+            const normalizedContactJid = normalizeJid(session.contactJid || "");
+
+            // Extrair instanceId corretamente
+            // Formato antigo: instance-{timestamp}-{random}-{jid}
+            // Formato novo: {instanceId}-{jid}
+            // IMPORTANTE: Manter o ID completo da instância para não perder a identificação única
+            let instanceId = session.id;
+            const atIndex = session.id.indexOf("@");
+            if (atIndex > 0) {
+              // Encontrar o último '-' antes do '@' (que separa instanceId do JID)
+              const beforeAt = session.id.substring(0, atIndex);
+              const lastDashIndex = beforeAt.lastIndexOf("-");
+              if (lastDashIndex > 0) {
+                // Formato: {instanceId}-{jid}
+                // Pegar tudo até o último '-' antes do '@' (isso é o instanceId completo)
+                instanceId = session.id.substring(0, lastDashIndex);
+              } else {
+                // Sem hífen antes do @: usar tudo até o @ como instanceId
+                instanceId = beforeAt;
+              }
+            } else {
+              // Sem @: tentar extrair pelo padrão conhecido
+              // Se começa com "instance-", pegar até o último hífen antes do final
+              if (session.id.startsWith("instance-")) {
+                const parts = session.id.split("-");
+                if (parts.length >= 3) {
+                  // Formato: instance-{timestamp}-{random}-{jid}
+                  // Pegar tudo exceto a última parte (JID)
+                  instanceId = parts.slice(0, -1).join("-");
+                } else {
+                  instanceId = parts[0];
+                }
+              }
+            }
+
+            const normalizedSessionId = `${instanceId}-${normalizedContactJid}`;
+
+            return {
+              ...session,
+              id: normalizedSessionId,
+              contactJid: normalizedContactJid,
+            };
+          })
+          // IMPORTANTE: Ordenar antes de consolidar - priorizar sessões com formato completo
+          // Isso garante que sessões com instanceId completo sejam processadas primeiro
+          .sort((a, b) => {
+            const aInstanceId = a.id.split("-")[0];
+            const bInstanceId = b.id.split("-")[0];
+            // Sessões com formato completo (não "instance") vêm primeiro
+            if (aInstanceId !== "instance" && bInstanceId === "instance")
+              return -1;
+            if (aInstanceId === "instance" && bInstanceId !== "instance")
+              return 1;
+            return 0; // Mesmo formato, manter ordem original
+          })
+          .reduce((acc, session) => {
+            // Verificar se já existe sessão com mesmo ID normalizado
+            const existingIndex = acc.findIndex((s) => s.id === session.id);
+
+            if (existingIndex >= 0) {
+              // Consolidar: mesclar mensagens e manter a mais recente
+              const existing = acc[existingIndex];
+              const mergedMessages = [
+                ...existing.messages,
+                ...session.messages.filter(
+                  (m) => !existing.messages.some((em) => em.id === m.id),
+                ),
+              ].sort((a, b) => (b.rawTimestamp || 0) - (a.rawTimestamp || 0));
+
+              acc[existingIndex] = {
+                ...existing,
+                messages: mergedMessages,
+                lastMessageTimestamp: Math.max(
+                  existing.lastMessageTimestamp || 0,
+                  session.lastMessageTimestamp || 0,
+                ),
+                lastMessage: mergedMessages[0]?.text || existing.lastMessage,
+                timestamp: mergedMessages[0]?.timestamp || existing.timestamp,
+              };
+            } else {
+              // Verificar também por contactJid normalizado (para casos onde instanceId foi perdido)
+              const normalizedContactJid = normalizeJid(
+                session.contactJid || "",
+              );
+              const sessionInstanceId = session.id.split("-")[0];
+
+              const existingByContact = acc.find((s) => {
+                if (!s.contactJid) return false;
+                const existingNormalized = normalizeJid(s.contactJid || "");
+                if (normalizedContactJid !== existingNormalized) return false;
+
+                const existingInstanceId = s.id.split("-")[0];
+
+                // Caso 1: Ambos têm instanceId simplificado ("instance"), consolidar
+                if (
+                  sessionInstanceId === "instance" &&
+                  existingInstanceId === "instance"
+                ) {
+                  return true;
+                }
+
+                // Caso 2: Sessão nova tem formato completo e existente tem formato simplificado
+                // Preferir a sessão nova (com formato completo) e consolidar nela
+                if (
+                  sessionInstanceId !== "instance" &&
+                  existingInstanceId === "instance"
+                ) {
+                  return true;
+                }
+
+                // Caso 3: Sessão nova tem formato simplificado e existente tem formato completo
+                // Preferir a existente (com formato completo) e consolidar nela
+                if (
+                  sessionInstanceId === "instance" &&
+                  existingInstanceId !== "instance"
+                ) {
+                  return true;
+                }
+
+                return false;
+              });
+
+              if (existingByContact) {
+                const existingInstanceId = existingByContact.id.split("-")[0];
+
+                const existingIndexByContact = acc.findIndex(
+                  (s) => s.id === existingByContact.id,
+                );
+                const mergedMessages = [
+                  ...existingByContact.messages,
+                  ...session.messages.filter(
+                    (m) =>
+                      !existingByContact.messages.some((em) => em.id === m.id),
+                  ),
+                ].sort((a, b) => (b.rawTimestamp || 0) - (a.rawTimestamp || 0));
+
+                // Determinar qual ID usar (sempre preferir formato completo)
+                const finalSessionId =
+                  sessionInstanceId !== "instance" &&
+                  existingInstanceId === "instance"
+                    ? session.id // Sessão nova tem formato completo, existente simplificado: usar novo
+                    : sessionInstanceId === "instance" &&
+                        existingInstanceId !== "instance"
+                      ? existingByContact.id // Sessão nova simplificada, existente completa: manter existente
+                      : existingByContact.id; // Ambos mesmo formato: manter existente
+
+                acc[existingIndexByContact] = {
+                  ...existingByContact,
+                  id: finalSessionId, // Atualizar ID se necessário
+                  contactJid: normalizedContactJid, // Garantir contactJid normalizado
+                  messages: mergedMessages,
+                  lastMessageTimestamp: Math.max(
+                    existingByContact.lastMessageTimestamp || 0,
+                    session.lastMessageTimestamp || 0,
+                  ),
+                  lastMessage:
+                    mergedMessages[0]?.text || existingByContact.lastMessage,
+                  timestamp:
+                    mergedMessages[0]?.timestamp || existingByContact.timestamp,
+                };
+              } else {
+                acc.push(session);
+              }
+            }
+            return acc;
+          }, [] as ChatSession[])
           .sort((a, b) => {
             // Ordenar por última mensagem (mais recente primeiro)
             const aTime = a.lastMessageTimestamp || 0;
@@ -258,13 +420,20 @@ const App: React.FC = () => {
           });
 
         const filteredCount = storedSessions.length - validSessions.length;
+        const beforeConsolidation = storedSessions.length;
+
         console.log(
-          `📦 Restaurando ${validSessions.length} sessões válidas do localStorage (${filteredCount} filtradas)`,
+          `📦 Restaurando ${validSessions.length} sessões válidas do localStorage (${filteredCount} filtradas, ${beforeConsolidation - validSessions.length} consolidadas)`,
         );
 
-        // Se grupos foram filtrados, salvar de volta sem grupos para limpar o localStorage
-        if (filteredCount > 0) {
-          console.log(`🧹 Removendo ${filteredCount} grupo(s) do localStorage`);
+        // IMPORTANTE: Sempre salvar de volta as sessões consolidadas para limpar duplicatas do localStorage
+        // Isso garante que na próxima carga, não haverá duplicatas
+        if (storedSessions.length !== validSessions.length) {
+          const consolidatedCount =
+            beforeConsolidation - validSessions.length - filteredCount;
+          console.log(
+            `🧹 Limpando localStorage: ${storedSessions.length} → ${validSessions.length} sessões (${filteredCount} grupos removidos, ${consolidatedCount} duplicatas consolidadas)`,
+          );
           saveSessionsToStorage(validSessions);
         }
 
@@ -349,33 +518,6 @@ const App: React.FC = () => {
       const fromJid = message.from || "";
       const toJid = message.to || "";
 
-      // #region agent log
-      fetch(
-        "http://127.0.0.1:7244/ingest/4c588078-cb72-4b05-91b7-3d96536f9ac0",
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            location: "App.tsx:285",
-            message: "Verificando grupo no frontend",
-            data: {
-              clientJid,
-              fromJid,
-              toJid,
-              isGroup:
-                clientJid?.includes("@g.us") ||
-                fromJid.includes("@g.us") ||
-                toJid.includes("@g.us"),
-            },
-            timestamp: Date.now(),
-            sessionId: "debug-session",
-            runId: "run1",
-            hypothesisId: "B",
-          }),
-        },
-      ).catch(() => {});
-      // #endregion
-
       if (
         clientJid?.includes("@g.us") ||
         fromJid.includes("@g.us") ||
@@ -386,49 +528,15 @@ const App: React.FC = () => {
           fromJid,
           toJid,
         });
-        // #region agent log
-        fetch(
-          "http://127.0.0.1:7244/ingest/4c588078-cb72-4b05-91b7-3d96536f9ac0",
-          {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              location: "App.tsx:293",
-              message: "GRUPO FILTRADO no frontend",
-              data: { clientJid, fromJid, toJid },
-              timestamp: Date.now(),
-              sessionId: "debug-session",
-              runId: "run1",
-              hypothesisId: "B",
-            }),
-          },
-        ).catch(() => {});
-        // #endregion
         return;
       }
 
-      // #region agent log
-      fetch(
-        "http://127.0.0.1:7244/ingest/4c588078-cb72-4b05-91b7-3d96536f9ac0",
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            location: "App.tsx:299",
-            message: "Mensagem aceita no frontend - não é grupo",
-            data: { clientJid, fromJid, toJid },
-            timestamp: Date.now(),
-            sessionId: "debug-session",
-            runId: "run1",
-            hypothesisId: "B",
-          }),
-        },
-      ).catch(() => {});
-      // #endregion
-
-      const sessionId = `${instanceId}-${clientJid}`;
+      // Normalizar clientJid para evitar duplicatas por variações (LID vs PN, :18, etc)
+      const normalizedClientJid = normalizeJid(clientJid);
+      const sessionId = `${instanceId}-${normalizedClientJid}`;
       const messageTimestamp = message.timestamp; // timestamp em milissegundos
       const isHistorical = message.isHistorical || false;
+
       console.log(
         `📨 Processando mensagem para sessão ${sessionId}:`,
         message.body?.substring(0, 50),
@@ -441,6 +549,62 @@ const App: React.FC = () => {
           .map((s) => s.id);
 
         let session = prev.find((s) => s.id === sessionId);
+
+        // VERIFICAÇÃO ADICIONAL: Procurar sessão existente pelo contactJid normalizado E instanceId
+        // Isso evita duplicatas quando o mesmo contato tem JIDs diferentes (LID vs PN)
+        // IMPORTANTE: Só consolidar se for a mesma instância
+        // Também verificar sessões com formato simplificado (instanceId perdido)
+        if (!session) {
+          const existingSessionByContact = prev.find((s) => {
+            if (!s.contactJid) return false;
+            const normalizedExisting = normalizeJid(s.contactJid);
+            if (normalizedExisting !== normalizedClientJid) return false;
+
+            // Verificar se é a mesma instância
+            const existingInstanceId = s.id.split("-")[0];
+            const existingSessionIdParts = s.id.split("-");
+
+            // Caso 1: Mesma instância (exato)
+            if (existingInstanceId === instanceId) return true;
+
+            // Caso 2: Sessão antiga com formato simplificado ("instance") e nova com formato completo
+            // Se a sessão existente tem apenas "instance" e a nova tem o instanceId completo,
+            // verificar se o contactJid é o mesmo (mesmo contato, mesma instância, formato diferente)
+            if (
+              existingInstanceId === "instance" &&
+              instanceId.startsWith("instance-")
+            ) {
+              // Verificar se o contactJid normalizado é o mesmo
+              return true; // Mesmo contato, provavelmente mesma instância (formato antigo)
+            }
+
+            return false;
+          });
+
+          if (existingSessionByContact) {
+            console.log(
+              `⚠️ Duplicata detectada: sessão existente ${existingSessionByContact.id} para o mesmo contato ${normalizedClientJid} na instância ${instanceId}`,
+            );
+            // Usar a sessão existente e atualizar o contactJid para o normalizado
+            session = existingSessionByContact;
+            session.contactJid = normalizedClientJid;
+            // Atualizar o ID da sessão para o normalizado
+            session.id = sessionId;
+
+            // IMPORTANTE: Atualizar prev para refletir a mudança de ID
+            // Isso garante que quando a mensagem for adicionada, a sessão será encontrada pelo novo ID
+            prev = prev.map((s) => {
+              if (s.id === existingSessionByContact.id) {
+                return {
+                  ...s,
+                  id: sessionId,
+                  contactJid: normalizedClientJid,
+                };
+              }
+              return s;
+            });
+          }
+        }
 
         // Criar nova mensagem
         const newMessage: Message = {
@@ -463,24 +627,6 @@ const App: React.FC = () => {
               clientJid,
               sessionId,
             });
-            // #region agent log
-            fetch(
-              "http://127.0.0.1:7244/ingest/4c588078-cb72-4b05-91b7-3d96536f9ac0",
-              {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({
-                  location: "App.tsx:308",
-                  message: "BLOQUEIO: Tentativa de criar sessão de grupo",
-                  data: { clientJid, sessionId },
-                  timestamp: Date.now(),
-                  sessionId: "debug-session",
-                  runId: "run1",
-                  hypothesisId: "D",
-                }),
-              },
-            ).catch(() => {});
-            // #endregion
             return prev; // Não criar sessão para grupo
           }
 
@@ -505,13 +651,13 @@ const App: React.FC = () => {
             messages: [newMessage],
             analysisHistory: [],
             criteriaConfig: instanceCriteriaConfig,
-            contactJid: clientJid,
+            contactJid: normalizedClientJid,
             profilePicture: undefined,
           };
 
           // Buscar foto de perfil assincronamente
           whatsappAPI
-            .getProfilePicture(instanceId, clientJid)
+            .getProfilePicture(instanceId, normalizedClientJid)
             .then((profilePic) => {
               if (profilePic) {
                 setSessions((prevSessions) =>
