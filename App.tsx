@@ -43,8 +43,33 @@ const loadSessionsFromStorage = (): ChatSession[] => {
       const parsed = JSON.parse(stored);
       // Validar estrutura básica
       if (Array.isArray(parsed)) {
-        console.log(`📦 ${parsed.length} sessões carregadas do localStorage`);
-        return parsed;
+        // FILTRO CRÍTICO: Remover grupos imediatamente ao carregar
+        const withoutGroups = parsed.filter((session: ChatSession) => {
+          const isGroup =
+            session.contactJid?.includes("@g.us") ||
+            session.id?.includes("@g.us");
+          if (isGroup) {
+            console.log("🧹 Removendo grupo do localStorage:", session.id);
+            return false;
+          }
+          return true;
+        });
+
+        // Se grupos foram removidos, salvar de volta imediatamente
+        if (withoutGroups.length !== parsed.length) {
+          localStorage.setItem(
+            STORAGE_KEY_SESSIONS,
+            JSON.stringify(withoutGroups),
+          );
+          console.log(
+            `🧹 ${parsed.length - withoutGroups.length} grupo(s) removido(s) do localStorage`,
+          );
+        }
+
+        console.log(
+          `📦 ${withoutGroups.length} sessões carregadas do localStorage`,
+        );
+        return withoutGroups;
       }
     }
   } catch (error) {
@@ -61,6 +86,9 @@ const saveSessionsToStorage = (sessions: ChatSession[]) => {
         // Remover sessões de status e outras inválidas
         if (session.contactJid?.includes("status@broadcast")) return false;
         if (session.id?.includes("status@broadcast")) return false;
+        // FILTRO: Remover conversas de grupo
+        if (session.contactJid?.includes("@g.us")) return false;
+        if (session.id?.includes("@g.us")) return false;
         if (!session.contactJid || !session.id) return false;
         return true;
       })
@@ -88,6 +116,9 @@ const saveSessionsToStorage = (sessions: ChatSession[]) => {
         .filter((session) => {
           if (session.contactJid?.includes("status@broadcast")) return false;
           if (session.id?.includes("status@broadcast")) return false;
+          // FILTRO: Remover conversas de grupo
+          if (session.contactJid?.includes("@g.us")) return false;
+          if (session.id?.includes("@g.us")) return false;
           if (!session.contactJid || !session.id) return false;
           return true;
         })
@@ -177,12 +208,40 @@ const App: React.FC = () => {
       const storedCriteria = loadCriteriaFromStorage();
 
       if (storedSessions.length > 0) {
-        // Filtrar sessões inválidas (status@broadcast, etc) e remover duplicatas
+        // Filtrar sessões inválidas (status@broadcast, grupos, etc) e remover duplicatas
         const validSessions = storedSessions
           .filter((session) => {
             // Remover sessões de status e outras inválidas
             if (session.contactJid?.includes("status@broadcast")) return false;
             if (session.id?.includes("status@broadcast")) return false;
+            // FILTRO: Remover conversas de grupo
+            const isGroup =
+              session.contactJid?.includes("@g.us") ||
+              session.id?.includes("@g.us");
+            if (isGroup) {
+              // #region agent log
+              fetch(
+                "http://127.0.0.1:7244/ingest/4c588078-cb72-4b05-91b7-3d96536f9ac0",
+                {
+                  method: "POST",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({
+                    location: "App.tsx:186",
+                    message: "GRUPO REMOVIDO do localStorage",
+                    data: {
+                      sessionId: session.id,
+                      contactJid: session.contactJid,
+                    },
+                    timestamp: Date.now(),
+                    sessionId: "debug-session",
+                    runId: "run1",
+                    hypothesisId: "C",
+                  }),
+                },
+              ).catch(() => {});
+              // #endregion
+              return false;
+            }
             if (!session.contactJid || !session.id) return false;
             return true;
           })
@@ -198,9 +257,17 @@ const App: React.FC = () => {
             return bTime - aTime;
           });
 
+        const filteredCount = storedSessions.length - validSessions.length;
         console.log(
-          `📦 Restaurando ${validSessions.length} sessões válidas do localStorage (${storedSessions.length - validSessions.length} filtradas)`,
+          `📦 Restaurando ${validSessions.length} sessões válidas do localStorage (${filteredCount} filtradas)`,
         );
+
+        // Se grupos foram filtrados, salvar de volta sem grupos para limpar o localStorage
+        if (filteredCount > 0) {
+          console.log(`🧹 Removendo ${filteredCount} grupo(s) do localStorage`);
+          saveSessionsToStorage(validSessions);
+        }
+
         setSessions(validSessions);
       }
 
@@ -277,6 +344,88 @@ const App: React.FC = () => {
         return;
       }
 
+      // FILTRO: Ignorar mensagens de grupo (não exibir conversas de grupo)
+      // Verificar tanto 'from' quanto 'to' para garantir que grupos sejam filtrados
+      const fromJid = message.from || "";
+      const toJid = message.to || "";
+
+      // #region agent log
+      fetch(
+        "http://127.0.0.1:7244/ingest/4c588078-cb72-4b05-91b7-3d96536f9ac0",
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            location: "App.tsx:285",
+            message: "Verificando grupo no frontend",
+            data: {
+              clientJid,
+              fromJid,
+              toJid,
+              isGroup:
+                clientJid?.includes("@g.us") ||
+                fromJid.includes("@g.us") ||
+                toJid.includes("@g.us"),
+            },
+            timestamp: Date.now(),
+            sessionId: "debug-session",
+            runId: "run1",
+            hypothesisId: "B",
+          }),
+        },
+      ).catch(() => {});
+      // #endregion
+
+      if (
+        clientJid?.includes("@g.us") ||
+        fromJid.includes("@g.us") ||
+        toJid.includes("@g.us")
+      ) {
+        console.log("Ignorando mensagem de grupo:", {
+          clientJid,
+          fromJid,
+          toJid,
+        });
+        // #region agent log
+        fetch(
+          "http://127.0.0.1:7244/ingest/4c588078-cb72-4b05-91b7-3d96536f9ac0",
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              location: "App.tsx:293",
+              message: "GRUPO FILTRADO no frontend",
+              data: { clientJid, fromJid, toJid },
+              timestamp: Date.now(),
+              sessionId: "debug-session",
+              runId: "run1",
+              hypothesisId: "B",
+            }),
+          },
+        ).catch(() => {});
+        // #endregion
+        return;
+      }
+
+      // #region agent log
+      fetch(
+        "http://127.0.0.1:7244/ingest/4c588078-cb72-4b05-91b7-3d96536f9ac0",
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            location: "App.tsx:299",
+            message: "Mensagem aceita no frontend - não é grupo",
+            data: { clientJid, fromJid, toJid },
+            timestamp: Date.now(),
+            sessionId: "debug-session",
+            runId: "run1",
+            hypothesisId: "B",
+          }),
+        },
+      ).catch(() => {});
+      // #endregion
+
       const sessionId = `${instanceId}-${clientJid}`;
       const messageTimestamp = message.timestamp; // timestamp em milissegundos
       const isHistorical = message.isHistorical || false;
@@ -307,6 +456,34 @@ const App: React.FC = () => {
         };
 
         if (!session) {
+          // VERIFICAÇÃO FINAL: Garantir que não estamos criando sessão para grupo
+          // Mesmo que tenha passado pelos filtros anteriores, verificar novamente aqui
+          if (clientJid?.includes("@g.us") || sessionId.includes("@g.us")) {
+            console.log("⚠️ Tentativa de criar sessão para grupo bloqueada:", {
+              clientJid,
+              sessionId,
+            });
+            // #region agent log
+            fetch(
+              "http://127.0.0.1:7244/ingest/4c588078-cb72-4b05-91b7-3d96536f9ac0",
+              {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                  location: "App.tsx:308",
+                  message: "BLOQUEIO: Tentativa de criar sessão de grupo",
+                  data: { clientJid, sessionId },
+                  timestamp: Date.now(),
+                  sessionId: "debug-session",
+                  runId: "run1",
+                  hypothesisId: "D",
+                }),
+              },
+            ).catch(() => {});
+            // #endregion
+            return prev; // Não criar sessão para grupo
+          }
+
           let instanceCriteriaConfig: CriteriaConfig | undefined;
           for (const [instId, criteria] of instanceCriteria.entries()) {
             if (sessionId.startsWith(instId + "-")) {

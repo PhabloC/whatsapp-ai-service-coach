@@ -338,27 +338,41 @@ export class WhatsAppManager extends EventEmitter {
   /**
    * Extrai o identificador mais útil (PN se disponível, senão LID)
    * Usa remoteJidAlt para DMs e participantAlt para grupos
+   * IMPORTANTE: Sempre verifica se é grupo ANTES de usar alternativos
    */
   private extractBestIdentifier(key: any, socket: WASocket): string {
+    // PRIMEIRO: Verificar se o remoteJid original é um grupo
+    // Se for grupo, retornar o remoteJid original (não usar alternativos)
+    const originalRemoteJid = key.remoteJid || "";
+    if (originalRemoteJid.includes("@g.us")) {
+      return originalRemoteJid; // Retornar grupo para ser filtrado depois
+    }
+
     // Para DMs, verificar se tem remoteJidAlt (PN alternativo)
+    // Só usar se o original NÃO for grupo
     if (key.remoteJidAlt) {
-      return key.remoteJidAlt;
+      // Verificar se o alternativo também não é grupo (por segurança)
+      if (!key.remoteJidAlt.includes("@g.us")) {
+        return key.remoteJidAlt;
+      }
     }
 
     // Tentar obter do mapeamento interno do socket
-    const remoteJid = key.remoteJid || "";
+    const remoteJid = originalRemoteJid;
 
     // Se for um LID, tentar converter para PN
     if (remoteJid.includes("@lid")) {
       const pn = this.getPnFromLid(remoteJid);
-      if (pn) return pn;
+      if (pn && !pn.includes("@g.us")) {
+        return pn;
+      }
 
       // Tentar usar o repositório interno do socket
       try {
         const lidMapping = (socket as any).signalRepository?.lidMapping;
         if (lidMapping?.getPNForLID) {
           const mappedPn = lidMapping.getPNForLID(remoteJid);
-          if (mappedPn) {
+          if (mappedPn && !mappedPn.includes("@g.us")) {
             this.storeLidPnMapping(remoteJid, mappedPn);
             return mappedPn;
           }
@@ -635,6 +649,89 @@ export class WhatsAppManager extends EventEmitter {
 
           const isFromMe = msg.key.fromMe || false;
 
+          // FILTRO CRÍTICO: Verificar se é grupo ANTES de processar
+          // Verificar o remoteJid original primeiro (não usar extractBestIdentifier ainda)
+          const originalRemoteJid = msg.key.remoteJid || "";
+
+          // #region agent log
+          fetch(
+            "http://127.0.0.1:7244/ingest/4c588078-cb72-4b05-91b7-3d96536f9ac0",
+            {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                location: "whatsapp-manager.ts:637",
+                message: "Verificando se é grupo",
+                data: {
+                  originalRemoteJid,
+                  participant: msg.key.participant,
+                  isGroup:
+                    originalRemoteJid.includes("@g.us") ||
+                    (msg.key.participant &&
+                      msg.key.participant.includes("@g.us")),
+                },
+                timestamp: Date.now(),
+                sessionId: "debug-session",
+                runId: "run1",
+                hypothesisId: "A",
+              }),
+            },
+          ).catch(() => {});
+          // #endregion
+
+          if (originalRemoteJid.includes("@g.us")) {
+            console.log(
+              "Ignorando mensagem de grupo (original):",
+              originalRemoteJid,
+            );
+            // #region agent log
+            fetch(
+              "http://127.0.0.1:7244/ingest/4c588078-cb72-4b05-91b7-3d96536f9ac0",
+              {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                  location: "whatsapp-manager.ts:640",
+                  message: "GRUPO FILTRADO - remoteJid original",
+                  data: { originalRemoteJid },
+                  timestamp: Date.now(),
+                  sessionId: "debug-session",
+                  runId: "run1",
+                  hypothesisId: "A",
+                }),
+              },
+            ).catch(() => {});
+            // #endregion
+            continue;
+          }
+
+          // Verificar também participant (para mensagens em grupos)
+          if (msg.key.participant && msg.key.participant.includes("@g.us")) {
+            console.log(
+              "Ignorando mensagem de grupo (participant):",
+              msg.key.participant,
+            );
+            // #region agent log
+            fetch(
+              "http://127.0.0.1:7244/ingest/4c588078-cb72-4b05-91b7-3d96536f9ac0",
+              {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                  location: "whatsapp-manager.ts:647",
+                  message: "GRUPO FILTRADO - participant",
+                  data: { participant: msg.key.participant },
+                  timestamp: Date.now(),
+                  sessionId: "debug-session",
+                  runId: "run1",
+                  hypothesisId: "A",
+                }),
+              },
+            ).catch(() => {});
+            // #endregion
+            continue;
+          }
+
           // Na v7, usar extractBestIdentifier para lidar com LIDs
           const remoteJid = this.extractBestIdentifier(msg.key, socket);
 
@@ -649,11 +746,51 @@ export class WhatsAppManager extends EventEmitter {
             continue;
           }
 
-          // FILTRO: Ignorar mensagens de grupo por enquanto (pode ser configurável depois)
+          // FILTRO: Ignorar mensagens de grupo (verificação adicional após extractBestIdentifier)
           if (remoteJid.includes("@g.us")) {
-            console.log("Ignorando mensagem de grupo:", remoteJid);
+            console.log(
+              "Ignorando mensagem de grupo (após extractBestIdentifier):",
+              remoteJid,
+            );
+            // #region agent log
+            fetch(
+              "http://127.0.0.1:7244/ingest/4c588078-cb72-4b05-91b7-3d96536f9ac0",
+              {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                  location: "whatsapp-manager.ts:665",
+                  message: "GRUPO FILTRADO - após extractBestIdentifier",
+                  data: { remoteJid, originalRemoteJid },
+                  timestamp: Date.now(),
+                  sessionId: "debug-session",
+                  runId: "run1",
+                  hypothesisId: "A",
+                }),
+              },
+            ).catch(() => {});
+            // #endregion
             continue;
           }
+
+          // #region agent log
+          fetch(
+            "http://127.0.0.1:7244/ingest/4c588078-cb72-4b05-91b7-3d96536f9ac0",
+            {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                location: "whatsapp-manager.ts:668",
+                message: "Mensagem aceita - não é grupo",
+                data: { remoteJid, originalRemoteJid },
+                timestamp: Date.now(),
+                sessionId: "debug-session",
+                runId: "run1",
+                hypothesisId: "A",
+              }),
+            },
+          ).catch(() => {});
+          // #endregion
 
           // Capturar pushName (nome de notificação) e armazenar no cache
           // O pushName vem junto com cada mensagem e é o nome que o contato definiu no WhatsApp
@@ -1025,6 +1162,21 @@ export class WhatsAppManager extends EventEmitter {
             for (const msg of messages) {
               if (!msg.message || !msg.key) continue;
 
+              // FILTRO CRÍTICO: Verificar se é grupo ANTES de processar
+              // Verificar o remoteJid original primeiro
+              const originalRemoteJid = msg.key.remoteJid || "";
+              if (originalRemoteJid.includes("@g.us")) {
+                continue; // Ignorar grupo
+              }
+
+              // Verificar também participant (para mensagens em grupos)
+              if (
+                msg.key.participant &&
+                msg.key.participant.includes("@g.us")
+              ) {
+                continue; // Ignorar grupo
+              }
+
               const isFromMe = msg.key.fromMe || false;
               const remoteJid = this.extractBestIdentifier(msg.key, socket);
 
@@ -1037,7 +1189,7 @@ export class WhatsAppManager extends EventEmitter {
                 continue;
               }
 
-              // FILTRO: Ignorar mensagens de grupo
+              // FILTRO: Ignorar mensagens de grupo (verificação adicional)
               if (remoteJid.includes("@g.us")) {
                 continue;
               }
