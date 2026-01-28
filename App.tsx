@@ -1,67 +1,216 @@
-import React, { useState, useEffect } from 'react';
-import { QRCodeScanner } from './components/qr-code-scanner/QRCodeScanner';
-import { ChatSession, AnalysisEntry, Message, CriteriaConfig, HeatmapAnalysis, SalesScript } from './types';
-import { ChatWindow } from './components/chat-window/ChatWindow';
-import { ConnectionInstance } from './components/sidebar/types';
-import { Dashboard } from './components/dashboard/Dashboard';
-import { LoadingScreen } from './components/loading';
-import { MainLayout } from './components/layout';
-import { whatsappAPI } from './src/services/whatsapp-api';
-import { Login } from './pages/login';
-import { Register } from './pages/register';
-import { ResetPassword } from './pages/reset-password';
-import { NewPassword } from './pages/new-password';
-import { WelcomeScreen } from './pages/welcome';
-import { useAuth } from './src/hooks/useAuth';
+import React, { useState, useEffect } from "react";
+import { QRCodeScanner } from "./components/qr-code-scanner/QRCodeScanner";
+import {
+  ChatSession,
+  AnalysisEntry,
+  Message,
+  CriteriaConfig,
+  HeatmapAnalysis,
+  SalesScript,
+} from "./types";
+import { ChatWindow } from "./components/chat-window/ChatWindow";
+import { ConnectionInstance } from "./components/sidebar/types";
+import { Dashboard } from "./components/dashboard/Dashboard";
+import { LoadingScreen } from "./components/loading";
+import { MainLayout } from "./components/layout";
+import { whatsappAPI } from "./src/services/whatsapp-api";
+import { Login } from "./pages/login";
+import { Register } from "./pages/register";
+import { ResetPassword } from "./pages/reset-password";
+import { NewPassword } from "./pages/new-password";
+import { WelcomeScreen } from "./pages/welcome";
+import { useAuth } from "./src/hooks/useAuth";
 
-type AuthPage = 'login' | 'register' | 'reset';
+type AuthPage = "login" | "register" | "reset";
 
 // Constantes para localStorage
-const STORAGE_KEY_SESSIONS = 'whatsapp_coach_sessions';
-const STORAGE_KEY_CRITERIA = 'whatsapp_coach_criteria';
+const STORAGE_KEY_SESSIONS = "whatsapp_coach_sessions";
+const STORAGE_KEY_CRITERIA = "whatsapp_coach_criteria";
+
+// Limite de conversas para exibir na interface (melhora performance)
+// Exibe apenas as N conversas mais recentes
+const MAX_DISPLAYED_CONVERSATIONS = 50;
+
+/**
+ * Normaliza um JID para garantir consistência e evitar duplicatas
+ * Remove sufixos como :18, converte LIDs para PNs quando possível
+ */
+const normalizeJid = (jid: string | undefined): string => {
+  if (!jid) return "";
+
+  // Remover sufixos como :18 (device ID)
+  let normalized = jid.split(":")[0];
+
+  // Se for grupo, retornar como está
+  if (normalized.includes("@g.us")) {
+    return normalized;
+  }
+
+  // Se for LID, tentar manter como está por enquanto (será normalizado pelo backend)
+  // O backend já envia o JID normalizado via extractBestIdentifier
+  return normalized;
+};
 
 // Funções utilitárias para persistência
 const loadSessionsFromStorage = (): ChatSession[] => {
   try {
     const stored = localStorage.getItem(STORAGE_KEY_SESSIONS);
-    console.log('📦 Carregando sessões do localStorage:', stored ? 'encontrado' : 'vazio');
+    console.log(
+      "📦 Carregando sessões do localStorage:",
+      stored ? "encontrado" : "vazio",
+    );
     if (stored) {
       const parsed = JSON.parse(stored);
       // Validar estrutura básica
       if (Array.isArray(parsed)) {
-        console.log(`📦 ${parsed.length} sessões carregadas do localStorage`);
-        return parsed;
+        // FILTRO CRÍTICO: Remover grupos e status imediatamente ao carregar
+        const filtered = parsed.filter((session: ChatSession) => {
+          // Remover grupos
+          const isGroup =
+            session.contactJid?.includes("@g.us") ||
+            session.id?.includes("@g.us");
+          if (isGroup) {
+            console.log("🧹 Removendo grupo do localStorage:", session.id);
+            return false;
+          }
+
+          // Remover status (pode vir em diferentes formatos: status@broadcast, status@lid, status@, etc)
+          // Conforme documentação do Baileys, status aparecem como status@broadcast
+          const isStatus =
+            session.contactJid?.includes("status@") ||
+            session.id?.includes("status@") ||
+            session.contactJid?.includes("@broadcast") ||
+            session.id?.includes("@broadcast") ||
+            session.contactJid === "status@broadcast" ||
+            session.id === "status@broadcast";
+          if (isStatus) {
+            console.log("🧹 Removendo status do localStorage:", session.id);
+            return false;
+          }
+
+          // FILTRO ADICIONAL: Remover sessões que têm apenas mensagens não suportadas
+          // Essas geralmente são status ou protocolMessages que já foram salvas
+          if (session.messages && session.messages.length > 0) {
+            const allUnsupported = session.messages.every(
+              (msg) =>
+                msg.text === "[Mídia ou mensagem não suportada]" ||
+                msg.text?.trim() === "[Mídia ou mensagem não suportada]",
+            );
+            if (allUnsupported) {
+              console.log(
+                "🧹 Removendo sessão com apenas mensagens não suportadas (possível status):",
+                session.id,
+              );
+              return false;
+            }
+          }
+
+          return true;
+        });
+
+        // Se grupos ou status foram removidos, salvar de volta imediatamente
+        if (filtered.length !== parsed.length) {
+          localStorage.setItem(STORAGE_KEY_SESSIONS, JSON.stringify(filtered));
+          const removedCount = parsed.length - filtered.length;
+          console.log(
+            `🧹 ${removedCount} sessão(ões) inválida(s) removida(s) do localStorage (grupos e status)`,
+          );
+        }
+
+        console.log(`📦 ${filtered.length} sessões carregadas do localStorage`);
+        return filtered;
       }
     }
   } catch (error) {
-    console.error('Erro ao carregar sessões do localStorage:', error);
+    console.error("Erro ao carregar sessões do localStorage:", error);
   }
   return [];
 };
 
 const saveSessionsToStorage = (sessions: ChatSession[]) => {
   try {
+    // Filtrar sessões inválidas antes de salvar
+    const validSessions = sessions
+      .filter((session) => {
+        // Remover sessões de status (pode vir em diferentes formatos)
+        if (session.contactJid?.includes("status@")) return false;
+        if (session.id?.includes("status@")) return false;
+        if (session.contactJid?.includes("@broadcast")) return false;
+        if (session.id?.includes("@broadcast")) return false;
+
+        // FILTRO ADICIONAL: Remover sessões que têm apenas mensagens não suportadas
+        // Essas geralmente são status ou protocolMessages
+        if (session.messages && session.messages.length > 0) {
+          const allUnsupported = session.messages.every(
+            (msg) =>
+              msg.text === "[Mídia ou mensagem não suportada]" ||
+              msg.text?.trim() === "[Mídia ou mensagem não suportada]",
+          );
+          if (allUnsupported) {
+            return false;
+          }
+        }
+
+        // FILTRO: Remover conversas de grupo
+        if (session.contactJid?.includes("@g.us")) return false;
+        if (session.id?.includes("@g.us")) return false;
+        if (!session.contactJid || !session.id) return false;
+        return true;
+      })
+      .filter(
+        (session, idx, arr) =>
+          // Remover duplicatas por ID
+          arr.findIndex((s) => s.id === session.id) === idx,
+      );
+
     // Limitar quantidade de mensagens por sessão para não estourar o localStorage
-    const sessionsToStore = sessions.map(session => ({
+    // Reduzido para 100 mensagens por sessão para evitar problemas de quota
+    const sessionsToStore = validSessions.map((session) => ({
       ...session,
-      messages: session.messages.slice(-500), // Manter últimas 500 mensagens por conversa
+      messages: session.messages.slice(-100), // Manter últimas 100 mensagens por conversa
     }));
     localStorage.setItem(STORAGE_KEY_SESSIONS, JSON.stringify(sessionsToStore));
-    console.log(`💾 ${sessions.length} sessões salvas no localStorage`);
+    console.log(
+      `💾 ${sessionsToStore.length} sessões válidas salvas no localStorage (${sessions.length - sessionsToStore.length} filtradas)`,
+    );
   } catch (error) {
-    console.error('Erro ao salvar sessões no localStorage:', error);
+    console.error("Erro ao salvar sessões no localStorage:", error);
     // Se der erro de quota, tentar salvar com menos mensagens
     try {
-      const minimalSessions = sessions.map(session => ({
+      const validSessions = sessions
+        .filter((session) => {
+          // Remover sessões de status (pode vir em diferentes formatos)
+          if (session.contactJid?.includes("status@")) return false;
+          if (session.id?.includes("status@")) return false;
+          if (session.contactJid?.includes("@broadcast")) return false;
+          if (session.id?.includes("@broadcast")) return false;
+          // FILTRO: Remover conversas de grupo
+          if (session.contactJid?.includes("@g.us")) return false;
+          if (session.id?.includes("@g.us")) return false;
+          if (!session.contactJid || !session.id) return false;
+          return true;
+        })
+        .filter(
+          (session, idx, arr) =>
+            arr.findIndex((s) => s.id === session.id) === idx,
+        );
+
+      // Redução ainda mais agressiva em caso de erro de quota
+      const minimalSessions = validSessions.map((session) => ({
         ...session,
-        messages: session.messages.slice(-100),
-        analysisHistory: session.analysisHistory.slice(-10),
-        heatmapHistory: session.heatmapHistory?.slice(-5),
-        salesScriptHistory: session.salesScriptHistory?.slice(-5),
+        messages: session.messages.slice(-50), // Apenas últimas 50 mensagens
+        analysisHistory: session.analysisHistory.slice(-5), // Apenas últimas 5 análises
+        heatmapHistory: session.heatmapHistory?.slice(-3), // Apenas últimos 3 heatmaps
+        salesScriptHistory: session.salesScriptHistory?.slice(-3), // Apenas últimos 3 scripts
       }));
-      localStorage.setItem(STORAGE_KEY_SESSIONS, JSON.stringify(minimalSessions));
+      localStorage.setItem(
+        STORAGE_KEY_SESSIONS,
+        JSON.stringify(minimalSessions),
+      );
     } catch {
-      console.error('Não foi possível salvar sessões mesmo com dados reduzidos');
+      console.error(
+        "Não foi possível salvar sessões mesmo com dados reduzidos",
+      );
     }
   }
 };
@@ -74,7 +223,7 @@ const loadCriteriaFromStorage = (): Map<string, CriteriaConfig> => {
       return new Map(Object.entries(parsed));
     }
   } catch (error) {
-    console.error('Erro ao carregar critérios do localStorage:', error);
+    console.error("Erro ao carregar critérios do localStorage:", error);
   }
   return new Map();
 };
@@ -84,32 +233,36 @@ const saveCriteriaToStorage = (criteria: Map<string, CriteriaConfig>) => {
     const obj = Object.fromEntries(criteria);
     localStorage.setItem(STORAGE_KEY_CRITERIA, JSON.stringify(obj));
   } catch (error) {
-    console.error('Erro ao salvar critérios no localStorage:', error);
+    console.error("Erro ao salvar critérios no localStorage:", error);
   }
 };
 
 const App: React.FC = () => {
-  const { 
-    user, 
-    loading: authLoading, 
-    error: authError, 
+  const {
+    user,
+    loading: authLoading,
+    error: authError,
     isRecoveryMode,
-    signIn, 
-    signUp, 
-    signOut, 
-    resetPassword, 
+    signIn,
+    signUp,
+    signOut,
+    resetPassword,
     updatePassword,
     clearError,
-    clearRecoveryMode 
+    clearRecoveryMode,
   } = useAuth();
-  const [authPage, setAuthPage] = useState<AuthPage>('login');
+  const [authPage, setAuthPage] = useState<AuthPage>("login");
   const [sessions, setSessions] = useState<ChatSession[]>([]);
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
   const [showQRScanner, setShowQRScanner] = useState(false);
   const [isConnected, setIsConnected] = useState(false);
   const [connections, setConnections] = useState<ConnectionInstance[]>([]);
-  const [currentView, setCurrentView] = useState<'chats' | 'dashboard' | 'settings'>('chats');
-  const [instanceCriteria, setInstanceCriteria] = useState<Map<string, CriteriaConfig>>(new Map());
+  const [currentView, setCurrentView] = useState<
+    "chats" | "dashboard" | "settings"
+  >("chats");
+  const [instanceCriteria, setInstanceCriteria] = useState<
+    Map<string, CriteriaConfig>
+  >(new Map());
 
   // Estado para controlar carregamento inicial das conexões
   const [loadingConnections, setLoadingConnections] = useState(true);
@@ -121,16 +274,244 @@ const App: React.FC = () => {
     if (user && !hasLoadedFromStorage) {
       const storedSessions = loadSessionsFromStorage();
       const storedCriteria = loadCriteriaFromStorage();
-      
+
       if (storedSessions.length > 0) {
-        console.log(`📦 Restaurando ${storedSessions.length} sessões do localStorage`);
-        setSessions(storedSessions);
+        // Filtrar sessões inválidas (status@broadcast, grupos, etc) e remover duplicatas
+        const validSessions = storedSessions
+          .filter((session) => {
+            // Remover sessões de status (pode vir em diferentes formatos)
+            if (session.contactJid?.includes("status@")) return false;
+            if (session.id?.includes("status@")) return false;
+            if (session.contactJid?.includes("@broadcast")) return false;
+            if (session.id?.includes("@broadcast")) return false;
+
+            // FILTRO ADICIONAL: Remover sessões que têm apenas mensagens não suportadas
+            // Essas geralmente são status ou protocolMessages
+            if (session.messages && session.messages.length > 0) {
+              const allUnsupported = session.messages.every(
+                (msg) =>
+                  msg.text === "[Mídia ou mensagem não suportada]" ||
+                  msg.text?.trim() === "[Mídia ou mensagem não suportada]",
+              );
+              if (allUnsupported) {
+                console.log(
+                  "🧹 Removendo sessão com apenas mensagens não suportadas:",
+                  session.id,
+                );
+                return false;
+              }
+            }
+
+            // FILTRO: Remover conversas de grupo
+            const isGroup =
+              session.contactJid?.includes("@g.us") ||
+              session.id?.includes("@g.us");
+            if (isGroup) {
+              return false;
+            }
+            if (!session.contactJid || !session.id) return false;
+            return true;
+          })
+          .map((session) => {
+            // Normalizar contactJid e sessionId para evitar duplicatas
+            const normalizedContactJid = normalizeJid(session.contactJid || "");
+
+            // Extrair instanceId corretamente
+            // Formato antigo: instance-{timestamp}-{random}-{jid}
+            // Formato novo: {instanceId}-{jid}
+            // IMPORTANTE: Manter o ID completo da instância para não perder a identificação única
+            let instanceId = session.id;
+            const atIndex = session.id.indexOf("@");
+            if (atIndex > 0) {
+              // Encontrar o último '-' antes do '@' (que separa instanceId do JID)
+              const beforeAt = session.id.substring(0, atIndex);
+              const lastDashIndex = beforeAt.lastIndexOf("-");
+              if (lastDashIndex > 0) {
+                // Formato: {instanceId}-{jid}
+                // Pegar tudo até o último '-' antes do '@' (isso é o instanceId completo)
+                instanceId = session.id.substring(0, lastDashIndex);
+              } else {
+                // Sem hífen antes do @: usar tudo até o @ como instanceId
+                instanceId = beforeAt;
+              }
+            } else {
+              // Sem @: tentar extrair pelo padrão conhecido
+              // Se começa com "instance-", pegar até o último hífen antes do final
+              if (session.id.startsWith("instance-")) {
+                const parts = session.id.split("-");
+                if (parts.length >= 3) {
+                  // Formato: instance-{timestamp}-{random}-{jid}
+                  // Pegar tudo exceto a última parte (JID)
+                  instanceId = parts.slice(0, -1).join("-");
+                } else {
+                  instanceId = parts[0];
+                }
+              }
+            }
+
+            const normalizedSessionId = `${instanceId}-${normalizedContactJid}`;
+
+            return {
+              ...session,
+              id: normalizedSessionId,
+              contactJid: normalizedContactJid,
+            };
+          })
+          // IMPORTANTE: Ordenar antes de consolidar - priorizar sessões com formato completo
+          // Isso garante que sessões com instanceId completo sejam processadas primeiro
+          .sort((a, b) => {
+            const aInstanceId = a.id.split("-")[0];
+            const bInstanceId = b.id.split("-")[0];
+            // Sessões com formato completo (não "instance") vêm primeiro
+            if (aInstanceId !== "instance" && bInstanceId === "instance")
+              return -1;
+            if (aInstanceId === "instance" && bInstanceId !== "instance")
+              return 1;
+            return 0; // Mesmo formato, manter ordem original
+          })
+          .reduce((acc, session) => {
+            // Verificar se já existe sessão com mesmo ID normalizado
+            const existingIndex = acc.findIndex((s) => s.id === session.id);
+
+            if (existingIndex >= 0) {
+              // Consolidar: mesclar mensagens e manter a mais recente
+              const existing = acc[existingIndex];
+              const mergedMessages = [
+                ...existing.messages,
+                ...session.messages.filter(
+                  (m) => !existing.messages.some((em) => em.id === m.id),
+                ),
+              ].sort((a, b) => (b.rawTimestamp || 0) - (a.rawTimestamp || 0));
+
+              acc[existingIndex] = {
+                ...existing,
+                messages: mergedMessages,
+                lastMessageTimestamp: Math.max(
+                  existing.lastMessageTimestamp || 0,
+                  session.lastMessageTimestamp || 0,
+                ),
+                lastMessage: mergedMessages[0]?.text || existing.lastMessage,
+                timestamp: mergedMessages[0]?.timestamp || existing.timestamp,
+              };
+            } else {
+              // Verificar também por contactJid normalizado (para casos onde instanceId foi perdido)
+              const normalizedContactJid = normalizeJid(
+                session.contactJid || "",
+              );
+              const sessionInstanceId = session.id.split("-")[0];
+
+              const existingByContact = acc.find((s) => {
+                if (!s.contactJid) return false;
+                const existingNormalized = normalizeJid(s.contactJid || "");
+                if (normalizedContactJid !== existingNormalized) return false;
+
+                const existingInstanceId = s.id.split("-")[0];
+
+                // Caso 1: Ambos têm instanceId simplificado ("instance"), consolidar
+                if (
+                  sessionInstanceId === "instance" &&
+                  existingInstanceId === "instance"
+                ) {
+                  return true;
+                }
+
+                // Caso 2: Sessão nova tem formato completo e existente tem formato simplificado
+                // Preferir a sessão nova (com formato completo) e consolidar nela
+                if (
+                  sessionInstanceId !== "instance" &&
+                  existingInstanceId === "instance"
+                ) {
+                  return true;
+                }
+
+                // Caso 3: Sessão nova tem formato simplificado e existente tem formato completo
+                // Preferir a existente (com formato completo) e consolidar nela
+                if (
+                  sessionInstanceId === "instance" &&
+                  existingInstanceId !== "instance"
+                ) {
+                  return true;
+                }
+
+                return false;
+              });
+
+              if (existingByContact) {
+                const existingInstanceId = existingByContact.id.split("-")[0];
+
+                const existingIndexByContact = acc.findIndex(
+                  (s) => s.id === existingByContact.id,
+                );
+                const mergedMessages = [
+                  ...existingByContact.messages,
+                  ...session.messages.filter(
+                    (m) =>
+                      !existingByContact.messages.some((em) => em.id === m.id),
+                  ),
+                ].sort((a, b) => (b.rawTimestamp || 0) - (a.rawTimestamp || 0));
+
+                // Determinar qual ID usar (sempre preferir formato completo)
+                const finalSessionId =
+                  sessionInstanceId !== "instance" &&
+                  existingInstanceId === "instance"
+                    ? session.id // Sessão nova tem formato completo, existente simplificado: usar novo
+                    : sessionInstanceId === "instance" &&
+                        existingInstanceId !== "instance"
+                      ? existingByContact.id // Sessão nova simplificada, existente completa: manter existente
+                      : existingByContact.id; // Ambos mesmo formato: manter existente
+
+                acc[existingIndexByContact] = {
+                  ...existingByContact,
+                  id: finalSessionId, // Atualizar ID se necessário
+                  contactJid: normalizedContactJid, // Garantir contactJid normalizado
+                  messages: mergedMessages,
+                  lastMessageTimestamp: Math.max(
+                    existingByContact.lastMessageTimestamp || 0,
+                    session.lastMessageTimestamp || 0,
+                  ),
+                  lastMessage:
+                    mergedMessages[0]?.text || existingByContact.lastMessage,
+                  timestamp:
+                    mergedMessages[0]?.timestamp || existingByContact.timestamp,
+                };
+              } else {
+                acc.push(session);
+              }
+            }
+            return acc;
+          }, [] as ChatSession[])
+          .sort((a, b) => {
+            // Ordenar por última mensagem (mais recente primeiro)
+            const aTime = a.lastMessageTimestamp || 0;
+            const bTime = b.lastMessageTimestamp || 0;
+            return bTime - aTime;
+          });
+
+        const filteredCount = storedSessions.length - validSessions.length;
+        const beforeConsolidation = storedSessions.length;
+
+        console.log(
+          `📦 Restaurando ${validSessions.length} sessões válidas do localStorage (${filteredCount} filtradas, ${beforeConsolidation - validSessions.length} consolidadas)`,
+        );
+
+        // IMPORTANTE: Sempre salvar de volta as sessões consolidadas para limpar duplicatas do localStorage
+        // Isso garante que na próxima carga, não haverá duplicatas
+        if (storedSessions.length !== validSessions.length) {
+          const consolidatedCount =
+            beforeConsolidation - validSessions.length - filteredCount;
+          console.log(
+            `🧹 Limpando localStorage: ${storedSessions.length} → ${validSessions.length} sessões (${filteredCount} grupos removidos, ${consolidatedCount} duplicatas consolidadas)`,
+          );
+          saveSessionsToStorage(validSessions);
+        }
+
+        setSessions(validSessions);
       }
-      
+
       if (storedCriteria.size > 0) {
         setInstanceCriteria(storedCriteria);
       }
-      
+
       setHasLoadedFromStorage(true);
     }
   }, [user, hasLoadedFromStorage]);
@@ -139,11 +520,11 @@ const App: React.FC = () => {
   useEffect(() => {
     // Só salvar após o carregamento inicial ter sido feito
     if (!hasLoadedFromStorage) return;
-    
+
     const timeoutId = setTimeout(() => {
       saveSessionsToStorage(sessions);
     }, 1000); // Debounce de 1 segundo para evitar escritas excessivas
-    
+
     return () => clearTimeout(timeoutId);
   }, [sessions, hasLoadedFromStorage]);
 
@@ -157,26 +538,29 @@ const App: React.FC = () => {
   useEffect(() => {
     if (!user) return;
 
-    console.log('🔄 useEffect de conexões iniciado - user:', user.email);
+    console.log("🔄 useEffect de conexões iniciado - user:", user.email);
 
     const initializeConnections = async () => {
       setLoadingConnections(true);
       try {
-        console.log('🔌 Conectando WebSocket...');
+        console.log("🔌 Conectando WebSocket...");
         whatsappAPI.connect();
-        
+
         // Tentar restaurar sessão automaticamente
         const restoredInstance = await whatsappAPI.autoRestoreSession();
-        
+
         if (restoredInstance) {
-          console.log('✅ Sessão restaurada automaticamente:', restoredInstance.id);
+          console.log(
+            "✅ Sessão restaurada automaticamente:",
+            restoredInstance.id,
+          );
         }
-        
+
         // Carregar todas as instâncias (incluindo a restaurada)
         const instances = await loadInstances();
-        console.log('📱 Instâncias carregadas:', instances.length);
+        console.log("📱 Instâncias carregadas:", instances.length);
       } catch (error) {
-        console.error('Erro ao inicializar conexões:', error);
+        console.error("Erro ao inicializar conexões:", error);
       } finally {
         setLoadingConnections(false);
       }
@@ -185,34 +569,196 @@ const App: React.FC = () => {
     initializeConnections();
 
     const handleMessage = (data: { instanceId: string; message: any }) => {
-      console.log('📨 App.tsx recebeu mensagem:', data);
+      console.log("📨 App.tsx recebeu mensagem:", data);
       const { instanceId, message } = data;
-      const contactName = message.contactName || message.from.split('@')[0];
+
+      // Extrair JIDs antes de qualquer processamento
+      const fromJid = message.from || "";
+      const toJid = message.to || "";
+
+      // #region agent log
+      fetch(
+        "http://127.0.0.1:7244/ingest/4c588078-cb72-4b05-91b7-3d96536f9ac0",
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            location: "App.tsx:519",
+            message: "Mensagem recebida no frontend",
+            data: {
+              fromJid,
+              toJid,
+              contactName: message.contactName,
+              body: message.body?.substring(0, 50),
+              isFromMe: message.isFromMe,
+            },
+            timestamp: Date.now(),
+            sessionId: "debug-session",
+            runId: "run1",
+            hypothesisId: "F",
+          }),
+        },
+      ).catch(() => {});
+      // #endregion
+
+      // FILTRO CRÍTICO: Ignorar mensagens de status ANTES de processar
+      // Status pode aparecer em from, to, ou ambos
+      if (
+        fromJid.includes("status@") ||
+        toJid.includes("status@") ||
+        fromJid.includes("@broadcast") ||
+        toJid.includes("@broadcast")
+      ) {
+        console.log("🚫 Ignorando mensagem de status:", { fromJid, toJid });
+        // #region agent log
+        fetch(
+          "http://127.0.0.1:7244/ingest/4c588078-cb72-4b05-91b7-3d96536f9ac0",
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              location: "App.tsx:540",
+              message: "STATUS FILTRADO no frontend",
+              data: { fromJid, toJid },
+              timestamp: Date.now(),
+              sessionId: "debug-session",
+              runId: "run1",
+              hypothesisId: "F",
+            }),
+          },
+        ).catch(() => {});
+        // #endregion
+        return;
+      }
+
+      // FILTRO: Ignorar mensagens de grupo (não exibir conversas de grupo)
+      if (fromJid.includes("@g.us") || toJid.includes("@g.us")) {
+        console.log("🚫 Ignorando mensagem de grupo:", { fromJid, toJid });
+        return;
+      }
+
+      const contactName = message.contactName || message.from.split("@")[0];
       const isFromMe = message.isFromMe || false;
-      const sender: 'client' | 'agent' = isFromMe ? 'agent' : 'client';
+      const sender: "client" | "agent" = isFromMe ? "agent" : "client";
       const clientJid = isFromMe ? message.to : message.from;
-      const sessionId = `${instanceId}-${clientJid}`;
+
+      // Verificação adicional de segurança
+      if (
+        !clientJid ||
+        clientJid.includes("status@") ||
+        clientJid.includes("@broadcast") ||
+        clientJid.includes("@g.us")
+      ) {
+        console.log("🚫 Ignorando mensagem inválida:", {
+          clientJid,
+          fromJid,
+          toJid,
+        });
+        return;
+      }
+
+      // Normalizar clientJid para evitar duplicatas por variações (LID vs PN, :18, etc)
+      const normalizedClientJid = normalizeJid(clientJid);
+      const sessionId = `${instanceId}-${normalizedClientJid}`;
       const messageTimestamp = message.timestamp; // timestamp em milissegundos
       const isHistorical = message.isHistorical || false;
-      console.log(`📨 Processando mensagem para sessão ${sessionId}:`, message.body?.substring(0, 50));
-      
-      setSessions(prev => {
-        let session = prev.find(s => s.id === sessionId);
+
+      console.log(
+        `📨 Processando mensagem para sessão ${sessionId}:`,
+        message.body?.substring(0, 50),
+      );
+
+      setSessions((prev) => {
+        // Verificar duplicatas antes de processar
+        const duplicateIds = prev
+          .filter((s, idx) => prev.findIndex((p) => p.id === s.id) !== idx)
+          .map((s) => s.id);
+
+        let session = prev.find((s) => s.id === sessionId);
+
+        // VERIFICAÇÃO ADICIONAL: Procurar sessão existente pelo contactJid normalizado E instanceId
+        // Isso evita duplicatas quando o mesmo contato tem JIDs diferentes (LID vs PN)
+        // IMPORTANTE: Só consolidar se for a mesma instância
+        // Também verificar sessões com formato simplificado (instanceId perdido)
+        if (!session) {
+          const existingSessionByContact = prev.find((s) => {
+            if (!s.contactJid) return false;
+            const normalizedExisting = normalizeJid(s.contactJid);
+            if (normalizedExisting !== normalizedClientJid) return false;
+
+            // Verificar se é a mesma instância
+            const existingInstanceId = s.id.split("-")[0];
+            const existingSessionIdParts = s.id.split("-");
+
+            // Caso 1: Mesma instância (exato)
+            if (existingInstanceId === instanceId) return true;
+
+            // Caso 2: Sessão antiga com formato simplificado ("instance") e nova com formato completo
+            // Se a sessão existente tem apenas "instance" e a nova tem o instanceId completo,
+            // verificar se o contactJid é o mesmo (mesmo contato, mesma instância, formato diferente)
+            if (
+              existingInstanceId === "instance" &&
+              instanceId.startsWith("instance-")
+            ) {
+              // Verificar se o contactJid normalizado é o mesmo
+              return true; // Mesmo contato, provavelmente mesma instância (formato antigo)
+            }
+
+            return false;
+          });
+
+          if (existingSessionByContact) {
+            console.log(
+              `⚠️ Duplicata detectada: sessão existente ${existingSessionByContact.id} para o mesmo contato ${normalizedClientJid} na instância ${instanceId}`,
+            );
+            // Usar a sessão existente e atualizar o contactJid para o normalizado
+            session = existingSessionByContact;
+            session.contactJid = normalizedClientJid;
+            // Atualizar o ID da sessão para o normalizado
+            session.id = sessionId;
+
+            // IMPORTANTE: Atualizar prev para refletir a mudança de ID
+            // Isso garante que quando a mensagem for adicionada, a sessão será encontrada pelo novo ID
+            prev = prev.map((s) => {
+              if (s.id === existingSessionByContact.id) {
+                return {
+                  ...s,
+                  id: sessionId,
+                  contactJid: normalizedClientJid,
+                };
+              }
+              return s;
+            });
+          }
+        }
 
         // Criar nova mensagem
         const newMessage: Message = {
           id: message.id,
           sender: sender,
           text: message.body,
-          timestamp: new Date(messageTimestamp).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }),
+          timestamp: new Date(messageTimestamp).toLocaleTimeString("pt-BR", {
+            hour: "2-digit",
+            minute: "2-digit",
+          }),
           contactName: contactName,
           rawTimestamp: messageTimestamp, // Guardar timestamp original para ordenação
         };
 
         if (!session) {
+          // VERIFICAÇÃO FINAL: Garantir que não estamos criando sessão para grupo
+          // Mesmo que tenha passado pelos filtros anteriores, verificar novamente aqui
+          if (clientJid?.includes("@g.us") || sessionId.includes("@g.us")) {
+            console.log("⚠️ Tentativa de criar sessão para grupo bloqueada:", {
+              clientJid,
+              sessionId,
+            });
+            return prev; // Não criar sessão para grupo
+          }
+
           let instanceCriteriaConfig: CriteriaConfig | undefined;
           for (const [instId, criteria] of instanceCriteria.entries()) {
-            if (sessionId.startsWith(instId + '-')) {
+            if (sessionId.startsWith(instId + "-")) {
               instanceCriteriaConfig = criteria;
               break;
             }
@@ -223,25 +769,42 @@ const App: React.FC = () => {
             id: sessionId,
             contactName: contactName,
             lastMessage: message.body,
-            timestamp: new Date(messageTimestamp).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }),
+            timestamp: new Date(messageTimestamp).toLocaleTimeString("pt-BR", {
+              hour: "2-digit",
+              minute: "2-digit",
+            }),
             lastMessageTimestamp: messageTimestamp,
             messages: [newMessage],
             analysisHistory: [],
             criteriaConfig: instanceCriteriaConfig,
-            contactJid: clientJid,
+            contactJid: normalizedClientJid,
             profilePicture: undefined,
           };
 
           // Buscar foto de perfil assincronamente
-          whatsappAPI.getProfilePicture(instanceId, clientJid).then(profilePic => {
-            if (profilePic) {
-              setSessions(prevSessions => 
-                prevSessions.map(s => 
-                  s.id === sessionId ? { ...s, profilePicture: profilePic } : s
-                )
-              );
-            }
-          }).catch(err => console.error('Erro ao buscar foto de perfil:', err));
+          whatsappAPI
+            .getProfilePicture(instanceId, normalizedClientJid)
+            .then((profilePic) => {
+              if (profilePic) {
+                setSessions((prevSessions) =>
+                  prevSessions.map((s) =>
+                    s.id === sessionId
+                      ? { ...s, profilePicture: profilePic }
+                      : s,
+                  ),
+                );
+              }
+            })
+            .catch((err) =>
+              console.error("Erro ao buscar foto de perfil:", err),
+            );
+
+          // Verificar se já existe sessão com mesmo ID antes de adicionar
+          const existingSession = prev.find((s) => s.id === sessionId);
+
+          if (existingSession) {
+            return prev; // Não adicionar duplicata
+          }
 
           // Adicionar nova sessão e ordenar por última mensagem (mais recente primeiro)
           const updatedSessions = [...prev, session].sort((a, b) => {
@@ -254,11 +817,35 @@ const App: React.FC = () => {
         }
 
         // Verificar se mensagem já existe
-        const messageExists = session.messages.some(m => m.id === message.id);
+        const messageExists = session.messages.some((m) => m.id === message.id);
         if (messageExists) return prev;
 
+        // VERIFICAÇÃO FINAL DE SEGURANÇA: Garantir que não estamos adicionando mensagem de status
+        // Mesmo que tenha passado pelos filtros anteriores, verificar novamente aqui
+        if (
+          clientJid?.includes("status@") ||
+          clientJid?.includes("@broadcast") ||
+          fromJid.includes("status@") ||
+          toJid.includes("status@") ||
+          fromJid.includes("@broadcast") ||
+          toJid.includes("@broadcast") ||
+          sessionId.includes("status@") ||
+          sessionId.includes("@broadcast")
+        ) {
+          console.log(
+            "🚫 Tentativa de adicionar mensagem de status bloqueada:",
+            {
+              clientJid,
+              fromJid,
+              toJid,
+              sessionId,
+            },
+          );
+          return prev; // Não adicionar mensagem de status
+        }
+
         // Atualizar sessão existente
-        const updatedSessions = prev.map(s => {
+        const updatedSessions = prev.map((s) => {
           if (s.id === sessionId) {
             // Adicionar mensagem e ordenar por timestamp
             const updatedMessages = [...s.messages, newMessage].sort((a, b) => {
@@ -269,18 +856,24 @@ const App: React.FC = () => {
 
             // Encontrar a mensagem mais recente para atualizar lastMessage
             const latestMessage = updatedMessages[updatedMessages.length - 1];
-            const latestTimestamp = latestMessage.rawTimestamp || messageTimestamp;
+            const latestTimestamp =
+              latestMessage.rawTimestamp || messageTimestamp;
 
             // Atualizar nome do contato se recebemos um nome melhor (não numérico)
-            const currentNameIsNumeric = /^\+?\d[\d\s\-()]+$/.test(s.contactName);
+            const currentNameIsNumeric = /^\+?\d[\d\s\-()]+$/.test(
+              s.contactName,
+            );
             const newNameIsNumeric = /^\+?\d[\d\s\-()]+$/.test(contactName);
             const shouldUpdateName = currentNameIsNumeric && !newNameIsNumeric;
-            
+
             return {
               ...s,
               messages: updatedMessages,
               lastMessage: latestMessage.text,
-              timestamp: new Date(latestTimestamp).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }),
+              timestamp: new Date(latestTimestamp).toLocaleTimeString("pt-BR", {
+                hour: "2-digit",
+                minute: "2-digit",
+              }),
               lastMessageTimestamp: latestTimestamp,
               ...(shouldUpdateName && { contactName: contactName }),
             };
@@ -288,39 +881,46 @@ const App: React.FC = () => {
           return s;
         });
 
+        // Remover duplicatas antes de ordenar
+        const uniqueSessions = updatedSessions.filter(
+          (s, idx, arr) => arr.findIndex((sess) => sess.id === s.id) === idx,
+        );
+
         // Ordenar sessões por última mensagem (mais recente primeiro)
-        return updatedSessions.sort((a, b) => {
+        const sortedSessions = uniqueSessions.sort((a, b) => {
           const aTime = a.lastMessageTimestamp || 0;
           const bTime = b.lastMessageTimestamp || 0;
           return bTime - aTime;
         });
+
+        return sortedSessions;
       });
     };
 
     const handleInstanceConnected = () => loadInstances();
     const handleInstanceDisconnected = () => loadInstances();
 
-    whatsappAPI.on('message', handleMessage);
-    whatsappAPI.on('instance_connected', handleInstanceConnected);
-    whatsappAPI.on('instance_disconnected', handleInstanceDisconnected);
+    whatsappAPI.on("message", handleMessage);
+    whatsappAPI.on("instance_connected", handleInstanceConnected);
+    whatsappAPI.on("instance_disconnected", handleInstanceDisconnected);
 
     return () => {
-      whatsappAPI.off('message', handleMessage);
-      whatsappAPI.off('instance_connected', handleInstanceConnected);
-      whatsappAPI.off('instance_disconnected', handleInstanceDisconnected);
+      whatsappAPI.off("message", handleMessage);
+      whatsappAPI.off("instance_connected", handleInstanceConnected);
+      whatsappAPI.off("instance_disconnected", handleInstanceDisconnected);
     };
   }, [user, instanceCriteria]);
 
   // Aplicar critérios da instância quando atualizados
   useEffect(() => {
     if (instanceCriteria.size === 0) return;
-    
-    setSessions(prev => {
+
+    setSessions((prev) => {
       let hasChanges = false;
-      const updated = prev.map(session => {
+      const updated = prev.map((session) => {
         if (!session.criteriaConfig) {
           for (const [instanceId, criteria] of instanceCriteria.entries()) {
-            if (session.id.startsWith(instanceId + '-')) {
+            if (session.id.startsWith(instanceId + "-")) {
               hasChanges = true;
               return { ...session, criteriaConfig: criteria };
             }
@@ -335,18 +935,29 @@ const App: React.FC = () => {
   const loadInstances = async (): Promise<ConnectionInstance[]> => {
     try {
       const instances = await whatsappAPI.getInstances();
-      const connectionInstances: ConnectionInstance[] = instances.map(inst => ({
-        id: inst.id,
-        name: inst.name,
-        status: inst.status === 'connected' ? 'active' : inst.status === 'connecting' || inst.status === 'qr_ready' ? 'connecting' : 'inactive',
-        connectedAt: inst.connectedAt ? new Date(inst.connectedAt).toLocaleString('pt-BR') : undefined,
-        phoneNumber: inst.phoneNumber,
-      }));
+      const connectionInstances: ConnectionInstance[] = instances.map(
+        (inst) => ({
+          id: inst.id,
+          name: inst.name,
+          status:
+            inst.status === "connected"
+              ? "active"
+              : inst.status === "connecting" || inst.status === "qr_ready"
+                ? "connecting"
+                : "inactive",
+          connectedAt: inst.connectedAt
+            ? new Date(inst.connectedAt).toLocaleString("pt-BR")
+            : undefined,
+          phoneNumber: inst.phoneNumber,
+        }),
+      );
       setConnections(connectionInstances);
-      setIsConnected(connectionInstances.some(c => c.status === 'active'));
+      setIsConnected(connectionInstances.some((c) => c.status === "active"));
       return connectionInstances;
     } catch (error) {
-      console.error('Erro ao carregar instâncias:', error);
+      if (import.meta.env.DEV) {
+        console.error("Erro ao carregar instâncias:", error);
+      }
       return [];
     }
   };
@@ -369,7 +980,7 @@ const App: React.FC = () => {
       setIsConnected(true);
       setShowQRScanner(false);
     } catch (error) {
-      console.error('Erro ao conectar:', error);
+      console.error("Erro ao conectar:", error);
     }
   };
 
@@ -379,121 +990,162 @@ const App: React.FC = () => {
 
   const handleDisconnectInstance = async (id: string) => {
     try {
-      setSessions(prev => prev.filter(s => !s.id.startsWith(id + '-')));
-      setConnections(prev => prev.filter(c => c.id !== id));
-      
+      setSessions((prev) => prev.filter((s) => !s.id.startsWith(id + "-")));
+      setConnections((prev) => prev.filter((c) => c.id !== id));
+
       await whatsappAPI.deleteInstance(id);
-      
+
       const updatedConnections = await loadInstances();
-      const remainingConnections = updatedConnections.filter(c => c.id !== id);
-      
-      if (remainingConnections.length === 0 || !remainingConnections.some(c => c.status === 'active')) {
+      const remainingConnections = updatedConnections.filter(
+        (c) => c.id !== id,
+      );
+
+      if (
+        remainingConnections.length === 0 ||
+        !remainingConnections.some((c) => c.status === "active")
+      ) {
         setIsConnected(false);
       }
-      
-      if (activeSessionId && activeSessionId.startsWith(id + '-')) {
+
+      if (activeSessionId && activeSessionId.startsWith(id + "-")) {
         setActiveSessionId(null);
       }
     } catch (error) {
-      console.error('Erro ao remover instância:', error);
+      if (import.meta.env.DEV) {
+        console.error("Erro ao remover instância:", error);
+      }
       await loadInstances();
-      alert('Erro ao remover conexão. Tente novamente.');
+      alert("Erro ao remover conexão. Tente novamente.");
     }
   };
 
   const updateSessionPrompt = (sessionId: string, newPrompt: string) => {
-    setSessions(prev => prev.map(s => 
-      s.id === sessionId ? { ...s, customPrompt: newPrompt } : s
-    ));
+    setSessions((prev) =>
+      prev.map((s) =>
+        s.id === sessionId ? { ...s, customPrompt: newPrompt } : s,
+      ),
+    );
   };
 
-  const updateSessionCriteria = (sessionId: string, criteria: CriteriaConfig, generatedPrompt?: string) => {
-    setSessions(prev => prev.map(s => 
-      s.id === sessionId ? { 
-        ...s, 
-        criteriaConfig: criteria,
-        // Se tiver prompt gerado, atualizar o customPrompt da sessão
-        customPrompt: generatedPrompt || s.customPrompt 
-      } : s
-    ));
+  const updateSessionCriteria = (
+    sessionId: string,
+    criteria: CriteriaConfig,
+    generatedPrompt?: string,
+  ) => {
+    setSessions((prev) =>
+      prev.map((s) =>
+        s.id === sessionId
+          ? {
+              ...s,
+              criteriaConfig: criteria,
+              // Se tiver prompt gerado, atualizar o customPrompt da sessão
+              customPrompt: generatedPrompt || s.customPrompt,
+            }
+          : s,
+      ),
+    );
   };
 
-  const updateInstanceCriteria = (instanceId: string, criteria: CriteriaConfig) => {
-    setInstanceCriteria(prev => {
+  const updateInstanceCriteria = (
+    instanceId: string,
+    criteria: CriteriaConfig,
+  ) => {
+    setInstanceCriteria((prev) => {
       const newMap = new Map(prev);
       newMap.set(instanceId, criteria);
       return newMap;
     });
-    
-    setSessions(prev => prev.map(s => {
-      if (s.id.startsWith(instanceId + '-')) {
-        return { ...s, criteriaConfig: criteria };
-      }
-      return s;
-    }));
+
+    setSessions((prev) =>
+      prev.map((s) => {
+        if (s.id.startsWith(instanceId + "-")) {
+          return { ...s, criteriaConfig: criteria };
+        }
+        return s;
+      }),
+    );
   };
 
-  const handleSaveHeatmapAnalysis = (sessionId: string, heatmap: HeatmapAnalysis) => {
-    setSessions(prev => prev.map(s => {
-      if (s.id === sessionId) {
-        const newHeatmapHistory = s.heatmapHistory || [];
-        return {
-          ...s,
-          heatmapHistory: [{ 
-            id: Date.now().toString(), 
-            timestamp: new Date().toLocaleString('pt-BR'), 
-            analysis: heatmap 
-          }, ...newHeatmapHistory]
-        };
-      }
-      return s;
-    }));
+  const handleSaveHeatmapAnalysis = (
+    sessionId: string,
+    heatmap: HeatmapAnalysis,
+  ) => {
+    setSessions((prev) =>
+      prev.map((s) => {
+        if (s.id === sessionId) {
+          const newHeatmapHistory = s.heatmapHistory || [];
+          return {
+            ...s,
+            heatmapHistory: [
+              {
+                id: Date.now().toString(),
+                timestamp: new Date().toLocaleString("pt-BR"),
+                analysis: heatmap,
+              },
+              ...newHeatmapHistory,
+            ],
+          };
+        }
+        return s;
+      }),
+    );
   };
 
   const handleSaveAnalysis = (sessionId: string, analysis: AnalysisEntry) => {
-    setSessions(prev => prev.map(s => 
-      s.id === sessionId ? { ...s, analysisHistory: [analysis, ...s.analysisHistory] } : s
-    ));
+    setSessions((prev) =>
+      prev.map((s) =>
+        s.id === sessionId
+          ? { ...s, analysisHistory: [analysis, ...s.analysisHistory] }
+          : s,
+      ),
+    );
   };
 
   const handleInjectMessage = (sessionId: string, message: Message) => {
-    setSessions(prev => prev.map(s => {
-      if (s.id === sessionId) {
-        return {
-          ...s,
-          messages: [...s.messages, message],
-          lastMessage: message.text,
-          timestamp: message.timestamp
-        };
-      }
-      return s;
-    }));
+    setSessions((prev) =>
+      prev.map((s) => {
+        if (s.id === sessionId) {
+          return {
+            ...s,
+            messages: [...s.messages, message],
+            lastMessage: message.text,
+            timestamp: message.timestamp,
+          };
+        }
+        return s;
+      }),
+    );
   };
 
   const handleMarkAsSale = (sessionId: string, markedAsSale: boolean) => {
-    setSessions(prev => prev.map(s => 
-      s.id === sessionId ? { ...s, markedAsSale } : s
-    ));
+    setSessions((prev) =>
+      prev.map((s) => (s.id === sessionId ? { ...s, markedAsSale } : s)),
+    );
   };
 
   const handleSaveSalesScript = (sessionId: string, script: SalesScript) => {
-    setSessions(prev => prev.map(s => {
-      if (s.id === sessionId) {
-        const newScriptHistory = s.salesScriptHistory || [];
-        return {
-          ...s,
-          salesScriptHistory: [{ 
-            id: Date.now().toString(), 
-            timestamp: new Date().toLocaleString('pt-BR'), 
-            script 
-          }, ...newScriptHistory]
-        };
-      }
-      return s;
-    }));
+    setSessions((prev) =>
+      prev.map((s) => {
+        if (s.id === sessionId) {
+          const newScriptHistory = s.salesScriptHistory || [];
+          return {
+            ...s,
+            salesScriptHistory: [
+              {
+                id: Date.now().toString(),
+                timestamp: new Date().toLocaleString("pt-BR"),
+                script,
+              },
+              ...newScriptHistory,
+            ],
+          };
+        }
+        return s;
+      }),
+    );
   };
 
-  const activeSession = sessions.find(s => s.id === activeSessionId) || null;
+  const activeSession = sessions.find((s) => s.id === activeSessionId) || null;
 
   // Tela de carregamento inicial
   if (authLoading && !user && !isRecoveryMode) {
@@ -503,14 +1155,14 @@ const App: React.FC = () => {
   // Tela de nova senha (após clicar no link do email)
   if (isRecoveryMode) {
     return (
-      <NewPassword 
+      <NewPassword
         loading={authLoading}
         error={authError}
         onUpdatePassword={updatePassword}
         onClearError={clearError}
         onNavigateToLogin={() => {
           clearRecoveryMode();
-          setAuthPage('login');
+          setAuthPage("login");
         }}
       />
     );
@@ -518,38 +1170,38 @@ const App: React.FC = () => {
 
   // Telas de autenticação
   if (!user) {
-    if (authPage === 'register') {
+    if (authPage === "register") {
       return (
-        <Register 
+        <Register
           loading={authLoading}
           error={authError}
           onSignUp={signUp}
           onClearError={clearError}
-          onNavigateToLogin={() => setAuthPage('login')}
+          onNavigateToLogin={() => setAuthPage("login")}
         />
       );
     }
 
-    if (authPage === 'reset') {
+    if (authPage === "reset") {
       return (
-        <ResetPassword 
+        <ResetPassword
           loading={authLoading}
           error={authError}
           onResetPassword={resetPassword}
           onClearError={clearError}
-          onNavigateToLogin={() => setAuthPage('login')}
+          onNavigateToLogin={() => setAuthPage("login")}
         />
       );
     }
 
     return (
-      <Login 
+      <Login
         loading={authLoading}
         error={authError}
         onSignIn={signIn}
         onClearError={clearError}
-        onNavigateToRegister={() => setAuthPage('register')}
-        onNavigateToReset={() => setAuthPage('reset')}
+        onNavigateToRegister={() => setAuthPage("register")}
+        onNavigateToReset={() => setAuthPage("reset")}
       />
     );
   }
@@ -557,7 +1209,7 @@ const App: React.FC = () => {
   // Tela de Conexão QR Code
   if (showQRScanner) {
     return (
-      <QRCodeScanner 
+      <QRCodeScanner
         onConnect={handleConnectWhatsApp}
         onCancel={() => setShowQRScanner(false)}
       />
@@ -572,7 +1224,7 @@ const App: React.FC = () => {
   // Tela de boas-vindas (sem conexão)
   if (!isConnected) {
     return (
-      <WelcomeScreen 
+      <WelcomeScreen
         userName={user.name}
         onLogout={handleLogout}
         onConnect={handleAddConnection}
@@ -597,10 +1249,10 @@ const App: React.FC = () => {
       instanceCriteria={instanceCriteria}
       onUpdateInstanceCriteria={updateInstanceCriteria}
     >
-      {currentView === 'dashboard' ? (
+      {currentView === "dashboard" ? (
         <Dashboard sessions={sessions} connections={connections} />
       ) : (
-        <ChatWindow 
+        <ChatWindow
           session={activeSession}
           userId={user?.id}
           onUpdateSessionPrompt={updateSessionPrompt}

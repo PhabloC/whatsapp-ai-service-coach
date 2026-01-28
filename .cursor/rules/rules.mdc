@@ -1,48 +1,28 @@
 ---
 alwaysApply: true
 ---
+
 # Overview
 
-1 - Sempre deixe o projeto bem organizado separando todos os componentes por pastas;
-
-2 - Gere código limpo, legível e comentado apenas quando necessário.
-
-3 - Priorize boas práticas da linguagem solicitada.
-
-4 - Evite soluções excessivamente complexas se houver uma alternativa simples.
-
-5 - Não invente APIs, funções ou bibliotecas inexistentes.
-
-6 - Se faltar informação, assuma o cenário mais comum e deixe isso claro.
-
-7 - Gere o código completo e funcional, pronto para uso.
-
-8 - Use nomes de variáveis semânticos.
-
-9 - Separe responsabilidades (funções, hooks, serviços).
-
-10 - Prefira código reutilizável e escalável.
-
-11 - Indique dependências externas quando existirem.
-
-12 - Nunca exponha chaves, tokens ou dados sensíveis.
-
-13 - Valide entradas do usuário.
-
-14 - Proteja contra XSS, SQL Injection e CSRF quando aplicável.
-
-15 - Utilize variáveis de ambiente para configurações sensíveis.
-
-16 - Evite loops desnecessários.
-
-17 - Prefira debounce/throttle para eventos frequentes.
-
-18 - Use lazy loading quando possível.
-
-19 - Minimize re-renderizações (em React, Vue etc).
-
-20 - Sempre que possível, inclua testes unitários básicos.
-
-21 - Separe código de lógica e de interface.
-
-22 - Use mocks para APIs externas.
+- Sempre deixe o projeto bem organizado separando todos os componentes por pastas;
+- Gere código limpo, legível e comentado apenas quando necessário.
+- Priorize boas práticas da linguagem solicitada.
+- Evite soluções excessivamente complexas se houver uma alternativa simples.
+- Não invente APIs, funções ou bibliotecas inexistentes.
+- Se faltar informação, assuma o cenário mais comum e deixe isso claro.
+- Gere o código completo e funcional, pronto para uso.
+- Use nomes de variáveis semânticos.
+- Separe responsabilidades (funções, hooks, serviços).
+- Prefira código reutilizável e escalável.
+- Indique dependências externas quando existirem.
+- Nunca exponha chaves, tokens ou dados sensíveis.
+- Valide entradas do usuário.
+- Proteja contra XSS, SQL Injection e CSRF quando aplicável.
+- Utilize variáveis de ambiente para configurações sensíveis.
+- Evite loops desnecessários.
+- Prefira debounce/throttle para eventos frequentes.
+- Use lazy loading quando possível.
+- Minimize re-renderizações (em React, Vue etc).
+- Sempre que possível, inclua testes unitários básicos.
+- Separe código de lógica e de interface.
+- Use mocks para APIs externas.

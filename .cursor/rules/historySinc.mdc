@@ -1,5 +1,5 @@
 ---
-alwaysApply: false
+alwaysApply: true
 ---
 
 ## History Sync
@@ -9,12 +9,12 @@ After connecting successfully, the socket will try to download and process old c
 This data is delivered to you via the messaging-history.set event. Here's an example on how to handle this data:
 
 sock.ev.on('messaging-history.set', ({
-	chats: newChats,
-	contacts: newContacts,
-	messages: newMessages,
-	syncType
+chats: newChats,
+contacts: newContacts,
+messages: newMessages,
+syncType
 }) => {
-  // handle the chats, contacts and messages
+// handle the chats, contacts and messages
 })
 
 You should store this data in your database and use it however you want. However, you should keep a record of messages so you can provide those messages to the getMessage function in the socket config.

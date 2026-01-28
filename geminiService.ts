@@ -1,12 +1,28 @@
 import { GoogleGenAI, Type } from "@google/genai";
-import { Message, AnalysisResult, HeatmapAnalysis, CriteriaConfig, SalesScript } from "./types";
+import {
+  Message,
+  AnalysisResult,
+  HeatmapAnalysis,
+  CriteriaConfig,
+  SalesScript,
+} from "./types";
 
-export const analyzeConversation = async (messages: Message[], prompt: string): Promise<AnalysisResult> => {
-  const ai = new GoogleGenAI({ apiKey: process.env.API_KEY || '' });
-  
+export const analyzeConversation = async (
+  messages: Message[],
+  prompt: string,
+): Promise<AnalysisResult> => {
+  const apiKey =
+    import.meta.env.VITE_GEMINI_API_KEY || import.meta.env.GEMINI_API_KEY || "";
+  if (!apiKey) {
+    throw new Error(
+      "Chave da API Gemini não configurada. Adicione VITE_GEMINI_API_KEY no arquivo .env",
+    );
+  }
+  const ai = new GoogleGenAI({ apiKey });
+
   const conversationContext = messages
-    .map(m => `${m.sender === 'agent' ? 'Atendente' : 'Cliente'}: ${m.text}`)
-    .join('\n');
+    .map((m) => `${m.sender === "agent" ? "Atendente" : "Cliente"}: ${m.text}`)
+    .join("\n");
 
   const response = await ai.models.generateContent({
     model: "gemini-3-flash-preview",
@@ -20,28 +36,49 @@ export const analyzeConversation = async (messages: Message[], prompt: string): 
       responseSchema: {
         type: Type.OBJECT,
         properties: {
-          score: { type: Type.NUMBER, description: "Nota de 0 a 100 para o atendimento" },
-          strengths: { type: Type.ARRAY, items: { type: Type.STRING }, description: "Pontos positivos" },
-          improvements: { type: Type.ARRAY, items: { type: Type.STRING }, description: "Pontos a melhorar" },
-          coachingTips: { type: Type.STRING, description: "Dicas práticas do coach" }
+          score: {
+            type: Type.NUMBER,
+            description: "Nota de 0 a 100 para o atendimento",
+          },
+          strengths: {
+            type: Type.ARRAY,
+            items: { type: Type.STRING },
+            description: "Pontos positivos",
+          },
+          improvements: {
+            type: Type.ARRAY,
+            items: { type: Type.STRING },
+            description: "Pontos a melhorar",
+          },
+          coachingTips: {
+            type: Type.STRING,
+            description: "Dicas práticas do coach",
+          },
         },
-        required: ["score", "strengths", "improvements", "coachingTips"]
-      }
-    }
+        required: ["score", "strengths", "improvements", "coachingTips"],
+      },
+    },
   });
 
   return JSON.parse(response.text);
 };
 
 export const analyzeConversationWithHeatmap = async (
-  messages: Message[], 
-  criteriaConfig: CriteriaConfig
+  messages: Message[],
+  criteriaConfig: CriteriaConfig,
 ): Promise<HeatmapAnalysis> => {
-  const ai = new GoogleGenAI({ apiKey: process.env.API_KEY || process.env.GEMINI_API_KEY || '' });
-  
+  const apiKey =
+    import.meta.env.VITE_GEMINI_API_KEY || import.meta.env.GEMINI_API_KEY || "";
+  if (!apiKey) {
+    throw new Error(
+      "Chave da API Gemini não configurada. Adicione VITE_GEMINI_API_KEY no arquivo .env",
+    );
+  }
+  const ai = new GoogleGenAI({ apiKey });
+
   const conversationContext = messages
-    .map(m => `${m.sender === 'agent' ? 'Vendedor' : 'Cliente'}: ${m.text}`)
-    .join('\n');
+    .map((m) => `${m.sender === "agent" ? "Vendedor" : "Cliente"}: ${m.text}`)
+    .join("\n");
 
   // Montar o Prompt Mestre substituindo as variáveis
   const masterPrompt = `Aja como um Auditor de Qualidade de Vendas especialista em conversas de WhatsApp.
@@ -89,56 +126,89 @@ ${conversationContext}`;
               estrutura: {
                 type: Type.OBJECT,
                 properties: {
-                  nota: { type: Type.NUMBER, description: "Nota de 0.0 a 10.0" },
-                  justificativa: { type: Type.STRING, description: "Justificativa da nota" }
+                  nota: {
+                    type: Type.NUMBER,
+                    description: "Nota de 0.0 a 10.0",
+                  },
+                  justificativa: {
+                    type: Type.STRING,
+                    description: "Justificativa da nota",
+                  },
                 },
-                required: ["nota", "justificativa"]
+                required: ["nota", "justificativa"],
               },
               spiced: {
                 type: Type.OBJECT,
                 properties: {
-                  nota: { type: Type.NUMBER, description: "Nota de 0.0 a 10.0" },
-                  justificativa: { type: Type.STRING, description: "Justificativa da nota" }
+                  nota: {
+                    type: Type.NUMBER,
+                    description: "Nota de 0.0 a 10.0",
+                  },
+                  justificativa: {
+                    type: Type.STRING,
+                    description: "Justificativa da nota",
+                  },
                 },
-                required: ["nota", "justificativa"]
+                required: ["nota", "justificativa"],
               },
               solucao: {
                 type: Type.OBJECT,
                 properties: {
-                  nota: { type: Type.NUMBER, description: "Nota de 0.0 a 10.0" },
-                  justificativa: { type: Type.STRING, description: "Justificativa da nota" }
+                  nota: {
+                    type: Type.NUMBER,
+                    description: "Nota de 0.0 a 10.0",
+                  },
+                  justificativa: {
+                    type: Type.STRING,
+                    description: "Justificativa da nota",
+                  },
                 },
-                required: ["nota", "justificativa"]
+                required: ["nota", "justificativa"],
               },
               objeções: {
                 type: Type.OBJECT,
                 properties: {
-                  nota: { type: Type.NUMBER, description: "Nota de 0.0 a 10.0" },
-                  justificativa: { type: Type.STRING, description: "Justificativa da nota" }
+                  nota: {
+                    type: Type.NUMBER,
+                    description: "Nota de 0.0 a 10.0",
+                  },
+                  justificativa: {
+                    type: Type.STRING,
+                    description: "Justificativa da nota",
+                  },
                 },
-                required: ["nota", "justificativa"]
+                required: ["nota", "justificativa"],
               },
               rapport: {
                 type: Type.OBJECT,
                 properties: {
-                  nota: { type: Type.NUMBER, description: "Nota de 0.0 a 10.0" },
-                  justificativa: { type: Type.STRING, description: "Justificativa da nota" }
+                  nota: {
+                    type: Type.NUMBER,
+                    description: "Nota de 0.0 a 10.0",
+                  },
+                  justificativa: {
+                    type: Type.STRING,
+                    description: "Justificativa da nota",
+                  },
                 },
-                required: ["nota", "justificativa"]
-              }
+                required: ["nota", "justificativa"],
+              },
             },
-            required: ["estrutura", "spiced", "solucao", "objeções", "rapport"]
+            required: ["estrutura", "spiced", "solucao", "objeções", "rapport"],
           },
-          nota_final: { type: Type.NUMBER, description: "Média aritmética das 5 notas" },
-          performance_status: { 
-            type: Type.STRING, 
+          nota_final: {
+            type: Type.NUMBER,
+            description: "Média aritmética das 5 notas",
+          },
+          performance_status: {
+            type: Type.STRING,
             enum: ["Em desenvolvimento", "Destaque", "Alerta"],
-            description: "Status de performance baseado na nota final"
-          }
+            description: "Status de performance baseado na nota final",
+          },
         },
-        required: ["analise", "nota_final", "performance_status"]
-      }
-    }
+        required: ["analise", "nota_final", "performance_status"],
+      },
+    },
   });
 
   const result = JSON.parse(response.text);
@@ -150,9 +220,18 @@ export interface GeneratedPromptResult {
   explicacao: string;
 }
 
-export const generateCustomPrompt = async (criteria: CriteriaConfig): Promise<GeneratedPromptResult> => {
-  const ai = new GoogleGenAI({ apiKey: process.env.API_KEY || process.env.GEMINI_API_KEY || '' });
-  
+export const generateCustomPrompt = async (
+  criteria: CriteriaConfig,
+): Promise<GeneratedPromptResult> => {
+  const apiKey =
+    import.meta.env.VITE_GEMINI_API_KEY || import.meta.env.GEMINI_API_KEY || "";
+  if (!apiKey) {
+    throw new Error(
+      "Chave da API Gemini não configurada. Adicione VITE_GEMINI_API_KEY no arquivo .env",
+    );
+  }
+  const ai = new GoogleGenAI({ apiKey });
+
   const masterPrompt = `Você é um especialista em criar prompts de avaliação de atendimento ao cliente.
 
 **OBJETIVO:** Com base nos critérios de avaliação fornecidos abaixo, crie um prompt otimizado e personalizado que será usado para analisar conversas de WhatsApp entre vendedores e clientes.
@@ -184,30 +263,41 @@ Responda **apenas** com um objeto JSON no formato especificado.`;
       responseSchema: {
         type: Type.OBJECT,
         properties: {
-          prompt: { 
-            type: Type.STRING, 
-            description: "O prompt completo e otimizado para avaliar conversas, pronto para uso" 
+          prompt: {
+            type: Type.STRING,
+            description:
+              "O prompt completo e otimizado para avaliar conversas, pronto para uso",
           },
-          explicacao: { 
-            type: Type.STRING, 
-            description: "Breve explicação de como o prompt foi estruturado baseado nos critérios" 
-          }
+          explicacao: {
+            type: Type.STRING,
+            description:
+              "Breve explicação de como o prompt foi estruturado baseado nos critérios",
+          },
         },
-        required: ["prompt", "explicacao"]
-      }
-    }
+        required: ["prompt", "explicacao"],
+      },
+    },
   });
 
   const result = JSON.parse(response.text);
   return result;
 };
 
-export const generateSalesScript = async (messages: Message[]): Promise<SalesScript> => {
-  const ai = new GoogleGenAI({ apiKey: process.env.API_KEY || process.env.GEMINI_API_KEY || '' });
-  
+export const generateSalesScript = async (
+  messages: Message[],
+): Promise<SalesScript> => {
+  const apiKey =
+    import.meta.env.VITE_GEMINI_API_KEY || import.meta.env.GEMINI_API_KEY || "";
+  if (!apiKey) {
+    throw new Error(
+      "Chave da API Gemini não configurada. Adicione VITE_GEMINI_API_KEY no arquivo .env",
+    );
+  }
+  const ai = new GoogleGenAI({ apiKey });
+
   const conversationContext = messages
-    .map(m => `${m.sender === 'agent' ? 'Vendedor' : 'Cliente'}: ${m.text}`)
-    .join('\n');
+    .map((m) => `${m.sender === "agent" ? "Vendedor" : "Cliente"}: ${m.text}`)
+    .join("\n");
 
   const masterPrompt = `Você é um especialista em vendas e criação de scripts comerciais.
 **OBJETIVO:** Analisar a conversa de venda bem-sucedida abaixo e criar um script de vendas replicável baseado nas técnicas e abordagens que funcionaram.
@@ -234,12 +324,19 @@ Responda **apenas** com um objeto JSON estruturado para integração no sistema.
       responseSchema: {
         type: Type.OBJECT,
         properties: {
-          titulo: { type: Type.STRING, description: "Título do script de vendas" },
-          resumo_conversa: { type: Type.STRING, description: "Resumo da conversa que gerou a venda" },
-          gatilhos_identificados: { 
-            type: Type.ARRAY, 
-            items: { type: Type.STRING }, 
-            description: "Gatilhos mentais/emocionais identificados na conversa" 
+          titulo: {
+            type: Type.STRING,
+            description: "Título do script de vendas",
+          },
+          resumo_conversa: {
+            type: Type.STRING,
+            description: "Resumo da conversa que gerou a venda",
+          },
+          gatilhos_identificados: {
+            type: Type.ARRAY,
+            items: { type: Type.STRING },
+            description:
+              "Gatilhos mentais/emocionais identificados na conversa",
           },
           script_recomendado: {
             type: Type.ARRAY,
@@ -248,17 +345,23 @@ Responda **apenas** com um objeto JSON estruturado para integração no sistema.
               properties: {
                 etapa: { type: Type.NUMBER, description: "Número da etapa" },
                 titulo: { type: Type.STRING, description: "Título da etapa" },
-                fala_sugerida: { type: Type.STRING, description: "Texto sugerido para usar" },
-                objetivo: { type: Type.STRING, description: "Objetivo desta etapa" }
+                fala_sugerida: {
+                  type: Type.STRING,
+                  description: "Texto sugerido para usar",
+                },
+                objetivo: {
+                  type: Type.STRING,
+                  description: "Objetivo desta etapa",
+                },
               },
-              required: ["etapa", "titulo", "fala_sugerida", "objetivo"]
+              required: ["etapa", "titulo", "fala_sugerida", "objetivo"],
             },
-            description: "Passos do script de vendas"
+            description: "Passos do script de vendas",
           },
-          dicas_aplicacao: { 
-            type: Type.ARRAY, 
-            items: { type: Type.STRING }, 
-            description: "Dicas práticas de aplicação" 
+          dicas_aplicacao: {
+            type: Type.ARRAY,
+            items: { type: Type.STRING },
+            description: "Dicas práticas de aplicação",
           },
           objecoes_previstas: {
             type: Type.ARRAY,
@@ -266,16 +369,26 @@ Responda **apenas** com um objeto JSON estruturado para integração no sistema.
               type: Type.OBJECT,
               properties: {
                 objecao: { type: Type.STRING, description: "Objeção comum" },
-                resposta_sugerida: { type: Type.STRING, description: "Resposta recomendada" }
+                resposta_sugerida: {
+                  type: Type.STRING,
+                  description: "Resposta recomendada",
+                },
               },
-              required: ["objecao", "resposta_sugerida"]
+              required: ["objecao", "resposta_sugerida"],
             },
-            description: "Objeções previstas e respostas sugeridas"
-          }
+            description: "Objeções previstas e respostas sugeridas",
+          },
         },
-        required: ["titulo", "resumo_conversa", "gatilhos_identificados", "script_recomendado", "dicas_aplicacao", "objecoes_previstas"]
-      }
-    }
+        required: [
+          "titulo",
+          "resumo_conversa",
+          "gatilhos_identificados",
+          "script_recomendado",
+          "dicas_aplicacao",
+          "objecoes_previstas",
+        ],
+      },
+    },
   });
 
   const result = JSON.parse(response.text);

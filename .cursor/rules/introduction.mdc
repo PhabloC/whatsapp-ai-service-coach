@@ -1,5 +1,5 @@
 ---
-alwaysApply: false
+alwaysApply: true
 ---
 
 ## Documentation
@@ -18,7 +18,6 @@ Yes, this means that this project is in no way affiliated with or endorsed by Wh
 
 Installation
 Adding Baileys to your project is as simple as:
-
 
 npm install baileys
 
